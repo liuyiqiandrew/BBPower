@@ -3,4 +3,5 @@ __pycache__/
 test/test_out/
 .pytest_cache/
 .conda-py313/
+*__pycache__*
 *~
