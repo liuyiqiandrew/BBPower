@@ -45,7 +45,7 @@ class ParameterManager:
             If *prior_type* is not recognised.
         """
         # If fixed parameter, just add its name and value
-        if p[1] == 'fixed':
+        if p[1] == "fixed":
             self.p_fixed.append((p_name, float(p[2][0])))
             return  # Then move on
 
@@ -58,9 +58,9 @@ class ParameterManager:
         self.p_free_priors.append(p)
         # Add fiducial value to initial vector
         prior_kind = self._prior_kind(p[1])
-        if prior_kind == 'tophat':
+        if prior_kind == "tophat":
             p0 = float(p[2][1])
-        elif prior_kind == 'gaussian':
+        elif prior_kind == "gaussian":
             p0 = float(p[2][0])
         else:
             raise ValueError(f"Unknown prior type {p[1]}")
@@ -93,8 +93,8 @@ class ParameterManager:
             Sorted names of entries whose keys start with ``'component_'``.
         """
         comps = []
-        for c_name in config['fg_model'].keys():
-            if c_name.startswith('component_'):
+        for c_name in config["fg_model"].keys():
+            if c_name.startswith("component_"):
                 comps.append(c_name)
         return sorted(comps)
 
@@ -119,42 +119,43 @@ class ParameterManager:
         self.p0 = []
 
         # CMB parameters
-        d = config.get('cmb_model')
+        d = config.get("cmb_model")
         if d:
-            self._add_parameters(d['params'])
+            self._add_parameters(d["params"])
 
         # Loop through FG components
         comp_names = self.get_component_names(config)
         for c_name in comp_names:
-            c = config['fg_model'][c_name]
-            for tag in ['sed_parameters', 'cross', 'decorr']:
+            c = config["fg_model"][c_name]
+            for tag in ["sed_parameters", "cross", "decorr"]:
                 d = c.get(tag)
                 if d:
                     self._add_parameters(d)
-            dc = c.get('cl_parameters')
+            dc = c.get("cl_parameters")
             if dc:  # Power spectra
                 for cl_name, d in dc.items():
                     p1, p2 = cl_name
                     # Add parameters only if we're using both
                     # polarization channels
-                    if ((p1 in config['pol_channels']) and
-                            (p2 in config['pol_channels'])):
+                    if (p1 in config["pol_channels"]) and (
+                        p2 in config["pol_channels"]
+                    ):
                         self._add_parameters(d)
 
-            dm = c.get('moments')
-            if dm and config['fg_model'].get('use_moments'):  # Moments
+            dm = c.get("moments")
+            if dm and config["fg_model"].get("use_moments"):  # Moments
                 self._add_parameters(dm)
 
         # Loop through different systematics
-        if 'systematics' in config.keys():
-            cnf_sys = config['systematics']
+        if "systematics" in config.keys():
+            cnf_sys = config["systematics"]
             # Bandpasses
-            if 'bandpasses' in cnf_sys.keys():
-                cnf_bps = cnf_sys['bandpasses']
+            if "bandpasses" in cnf_sys.keys():
+                cnf_bps = cnf_sys["bandpasses"]
                 i_bps = 1
-                while f'bandpass_{i_bps}' in cnf_bps:
-                    if cnf_bps[f'bandpass_{i_bps}'].get('parameters'):
-                        self._add_parameters(cnf_bps[f'bandpass_{i_bps}']['parameters'])
+                while f"bandpass_{i_bps}" in cnf_bps:
+                    if cnf_bps[f"bandpass_{i_bps}"].get("parameters"):
+                        self._add_parameters(cnf_bps[f"bandpass_{i_bps}"]["parameters"])
                     i_bps += 1
 
         self.p0 = np.array(self.p0)
@@ -201,9 +202,9 @@ class ParameterManager:
         """
         lnp = 0
         for p, pr in zip(par, self.p_free_priors):
-            if self._prior_kind(pr[1]) == 'gaussian':  # Gaussian prior
-                lnp += -0.5 * ((p - pr[2][0])/pr[2][1])**2
+            if self._prior_kind(pr[1]) == "gaussian":  # Gaussian prior
+                lnp += -0.5 * ((p - pr[2][0]) / pr[2][1]) ** 2
             else:  # Only other option is top-hat
-                if not(float(pr[2][0]) <= p <= float(pr[2][2])):
+                if not (float(pr[2][0]) <= p <= float(pr[2][2])):
                     return -np.inf
         return lnp

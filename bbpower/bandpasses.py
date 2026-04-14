@@ -44,29 +44,37 @@ class Bandpass:
         Whether the bandpass has complex (phase) information.
     """
 
-    def __init__(self, nu: np.ndarray, dnu: np.ndarray, bnu: np.ndarray, bp_number: int, config: dict) -> None:
+    def __init__(
+        self,
+        nu: np.ndarray,
+        dnu: np.ndarray,
+        bnu: np.ndarray,
+        bp_number: int,
+        config: dict,
+    ) -> None:
         self.number = bp_number
         self.nu = nu
         self.bnu_dnu = bnu * dnu
         cmbs = self.sed_CMB_RJ(self.nu)
-        self.nu_mean = (np.sum(cmbs * self.bnu_dnu * nu**3) /
-                        np.sum(cmbs * self.bnu_dnu * nu**2))
+        self.nu_mean = np.sum(cmbs * self.bnu_dnu * nu**3) / np.sum(
+            cmbs * self.bnu_dnu * nu**2
+        )
         self.cmb_norm = np.sum(cmbs * self.bnu_dnu * nu**2)
-        field = f'bandpass_{bp_number}'
+        field = f"bandpass_{bp_number}"
 
         # Get frequency-dependent angle if necessary
         try:
-            fname = config['systematics']['bandpasses'][field]['phase_nu']
+            fname = config["systematics"]["bandpasses"][field]["phase_nu"]
         except KeyError:
             fname = None
             self.is_complex = False
         if fname:
             from scipy.interpolate import interp1d
+
             nu_phi, phi = np.loadtxt(fname, unpack=True)
-            phif = interp1d(nu_phi, np.radians(phi),
-                            bounds_error=False, fill_value=0)
+            phif = interp1d(nu_phi, np.radians(phi), bounds_error=False, fill_value=0)
             phi_arr = phif(self.nu)
-            phase = np.cos(2*phi_arr) + 1j * np.sin(2*phi_arr)
+            phase = np.cos(2 * phi_arr) + 1j * np.sin(2 * phi_arr)
             self.bnu_dnu = self.bnu_dnu * phase
             self.is_complex = True
 
@@ -80,20 +88,20 @@ class Bandpass:
         self.do_dphi1 = False
         self.name_dphi1 = None
         try:
-            d = config['systematics']['bandpasses'][field]['parameters']
+            d = config["systematics"]["bandpasses"][field]["parameters"]
         except KeyError:
             d = {}
         for n, p in d.items():
-            if p[0] == 'shift':
+            if p[0] == "shift":
                 self.do_shift = True
                 self.name_shift = n
-            if p[0] == 'gain':
+            if p[0] == "gain":
                 self.do_gain = True
                 self.name_gain = n
-            if p[0] == 'angle':
+            if p[0] == "angle":
                 self.do_angle = True
                 self.name_angle = n
-            if p[0] == 'dphi1':
+            if p[0] == "dphi1":
                 self.do_dphi1 = True
                 self.is_complex = True
                 self.name_dphi1 = n
@@ -112,11 +120,13 @@ class Bandpass:
             CMB SED evaluated at the given frequencies, in RJ temperature
             units (i.e., the conversion factor from CMB thermodynamic to RJ).
         """
-        x = 0.01760867023799751*nu
+        x = 0.01760867023799751 * nu
         ex = np.exp(x)
-        return ex*(x/(ex-1))**2
+        return ex * (x / (ex - 1)) ** 2
 
-    def convolve_sed(self, sed: Callable | None, params: dict) -> tuple[float | complex, np.ndarray | None]:
+    def convolve_sed(
+        self, sed: Callable | None, params: dict
+    ) -> tuple[float | complex, np.ndarray | None]:
         """Convolve an SED function with this bandpass.
 
         Applies frequency shift, gain, and dphi1 systematics if enabled.
@@ -140,32 +150,35 @@ class Bandpass:
             A 2x2 rotation matrix if the bandpass is complex, otherwise
             None.
         """
-        dnu = 0.
-        dphi1_phase = 1.
+        dnu = 0.0
+        dphi1_phase = 1.0
         if self.do_shift:
             dnu = params[self.name_shift] * self.nu_mean
 
         if self.do_dphi1:
             dphi1 = params[self.name_dphi1]
-            normed_dphi1 = dphi1 * np.pi / 180. * (self.nu - self.nu_mean) / self.nu_mean
-            dphi1_phase = np.cos(2.*normed_dphi1) + 1j * np.sin(2.*normed_dphi1)
+            normed_dphi1 = (
+                dphi1 * np.pi / 180.0 * (self.nu - self.nu_mean) / self.nu_mean
+            )
+            dphi1_phase = np.cos(2.0 * normed_dphi1) + 1j * np.sin(2.0 * normed_dphi1)
 
         nu_prime = self.nu + dnu
         # CMB sed
         if sed is None:
             sed = self.sed_CMB_RJ
-        conv_sed = np.sum(sed(nu_prime) * self.bnu_dnu *
-                          dphi1_phase * nu_prime**2) / self.cmb_norm
+        conv_sed = (
+            np.sum(sed(nu_prime) * self.bnu_dnu * dphi1_phase * nu_prime**2)
+            / self.cmb_norm
+        )
 
         if self.do_gain:
             conv_sed *= params[self.name_gain]
 
         if self.is_complex:
             mod = abs(conv_sed)
-            cs = conv_sed.real/mod
-            sn = conv_sed.imag/mod
-            return mod, np.array([[cs, sn],
-                                  [-sn, cs]])
+            cs = conv_sed.real / mod
+            sn = conv_sed.imag / mod
+            return mod, np.array([[cs, sn], [-sn, cs]])
         else:
             return conv_sed, None
 
@@ -190,15 +203,16 @@ class Bandpass:
         """
         if self.do_angle:
             phi = np.radians(params[self.name_angle])
-            c = np.cos(2*phi)
-            s = np.sin(2*phi)
-            return np.array([[c, s],
-                             [-s, c]])
+            c = np.cos(2 * phi)
+            s = np.sin(2 * phi)
+            return np.array([[c, s], [-s, c]])
         else:
             return None
 
 
-def rotate_cells_mat(mat1: np.ndarray | None, mat2: np.ndarray | None, cls: np.ndarray) -> np.ndarray:
+def rotate_cells_mat(
+    mat1: np.ndarray | None, mat2: np.ndarray | None, cls: np.ndarray
+) -> np.ndarray:
     """Apply rotation matrices to power spectrum arrays.
 
     Rotates the power spectra ``cls`` by the given 2x2 matrices using
@@ -220,13 +234,15 @@ def rotate_cells_mat(mat1: np.ndarray | None, mat2: np.ndarray | None, cls: np.n
         Rotated power spectrum array.
     """
     if mat1 is not None:
-        cls = np.einsum('ijk,lk', cls, mat1)
+        cls = np.einsum("ijk,lk", cls, mat1)
     if mat2 is not None:
-        cls = np.einsum('jk,ikl', mat2, cls)
+        cls = np.einsum("jk,ikl", mat2, cls)
     return cls
 
 
-def rotate_cells(bp1: Bandpass, bp2: Bandpass, cls: np.ndarray, params: dict) -> np.ndarray:
+def rotate_cells(
+    bp1: Bandpass, bp2: Bandpass, cls: np.ndarray, params: dict
+) -> np.ndarray:
     """Rotate power spectra using polarization angle systematics.
 
     Convenience wrapper that obtains rotation matrices from two Bandpass
@@ -253,7 +269,9 @@ def rotate_cells(bp1: Bandpass, bp2: Bandpass, cls: np.ndarray, params: dict) ->
     return rotate_cells_mat(m1, m2, cls)
 
 
-def decorrelated_bpass(bpass1: Bandpass, bpass2: Bandpass, sed: Callable, params: dict, decorr_delta: float) -> float:
+def decorrelated_bpass(
+    bpass1: Bandpass, bpass2: Bandpass, sed: Callable, params: dict, decorr_delta: float
+) -> float:
     """Compute the decorrelated bandpass-convolved SED for two bandpasses.
 
     Models frequency decorrelation between two bandpasses using the factor
@@ -280,8 +298,9 @@ def decorrelated_bpass(bpass1: Bandpass, bpass2: Bandpass, sed: Callable, params
         Decorrelated cross-bandpass SED amplitude, normalized to CMB
         and including any gain systematics.
     """
+
     def convolved_freqs(bpass):
-        dnu = 0.
+        dnu = 0.0
         if bpass.do_shift:
             dnu = params[bpass.name_shift] * bpass.nu_mean
         nu_prime = bpass.nu + dnu
@@ -291,10 +310,10 @@ def decorrelated_bpass(bpass1: Bandpass, bpass2: Bandpass, sed: Callable, params
 
     nu_prime1, bphi1 = convolved_freqs(bpass1)
     nu_prime2, bphi2 = convolved_freqs(bpass2)
-    nu1nu2 = np.outer(nu_prime1, 1./nu_prime2)
-    decorr_exp = decorr_delta**(np.log(nu1nu2)**2)
-    decorr_sed = np.einsum('i, ij, j', bphi1, decorr_exp, bphi2)
-    decorr_sed *= 1./(bpass1.cmb_norm * bpass2.cmb_norm)
+    nu1nu2 = np.outer(nu_prime1, 1.0 / nu_prime2)
+    decorr_exp = decorr_delta ** (np.log(nu1nu2) ** 2)
+    decorr_sed = np.einsum("i, ij, j", bphi1, decorr_exp, bphi2)
+    decorr_sed *= 1.0 / (bpass1.cmb_norm * bpass2.cmb_norm)
 
     if bpass1.do_gain:
         decorr_sed *= params[bpass1.name_gain]

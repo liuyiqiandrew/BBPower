@@ -20,6 +20,7 @@ class DataFile:
     named by a tag.
 
     """
+
     @classmethod
     def open(cls, path: str, mode: str) -> Any:
         """
@@ -41,11 +42,13 @@ class HDFFile(DataFile):
     requires an HDF5 library installation.
 
     """
-    suffix = 'hdf'
+
+    suffix = "hdf"
 
     @classmethod
     def open(cls, path: str, mode: str, **kwargs: Any) -> Any:
         import warnings
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             import h5py
@@ -57,15 +60,17 @@ class FitsFile(DataFile):
     A data file in the FITS format.
     Using these files requires the fitsio package.
     """
-    suffix = 'fits'
+
+    suffix = "fits"
 
     @classmethod
     def open(cls, path: str, mode: str, **kwargs: Any) -> Any:
         import fitsio
+
         # Fitsio doesn't have pure 'w' modes, just 'rw'.
         # Maybe we should check if the file already exists here?
-        if mode == 'w':
-            mode = 'rw'
+        if mode == "w":
+            mode = "rw"
         return fitsio.FITS(path, mode=mode, **kwargs)
 
 
@@ -73,42 +78,48 @@ class TextFile(DataFile):
     """
     A data file in plain text format.
     """
-    suffix = 'txt'
+
+    suffix = "txt"
 
 
 class YamlFile(DataFile):
     """
     A data file in yaml format.
     """
-    suffix = 'yml'
+
+    suffix = "yml"
 
 
 class NpzFile(DataFile):
     """
     A data file in yaml format.
     """
-    suffix = 'npz'
+
+    suffix = "npz"
 
 
 class DirFile(DataFile):
     """
     A dummy type
     """
-    suffix = 'dir'
+
+    suffix = "dir"
 
 
 class HTMLFile(DataFile):
     """
     A dummy type
     """
-    suffix = 'html'
+
+    suffix = "html"
 
 
 class DummyFile(DataFile):
     """
     A dummy type
     """
-    suffix = 'dum'
+
+    suffix = "dum"
 
     @classmethod
     def open(cls, path: str, mode: str, **kwargs: Any) -> Any:

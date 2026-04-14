@@ -51,5 +51,18 @@ all = [
 [project.scripts]
 bbpower = "bbpower.__main__:main"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--tb=short"]
+markers = [
+    "slow: tests needing heavy computation or generated data",
+    "requires_fgbuster: tests needing fgbuster import",
+]
+filterwarnings = ["ignore::DeprecationWarning:sympy.*"]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
 [tool.setuptools.packages.find]
 include = ["bbpower*"]

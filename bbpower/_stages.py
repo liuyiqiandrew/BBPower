@@ -17,7 +17,9 @@ def get_stage_class(stage_name: str) -> Any:
         module_name = STAGE_MODULES[stage_name]
     except KeyError as exc:
         known = ", ".join(sorted(STAGE_MODULES))
-        raise KeyError(f"Unknown BBPower stage {stage_name!r}. Known stages: {known}") from exc
+        raise KeyError(
+            f"Unknown BBPower stage {stage_name!r}. Known stages: {known}"
+        ) from exc
 
     module = import_module(module_name)
     return getattr(module, stage_name)

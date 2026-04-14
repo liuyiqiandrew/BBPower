@@ -66,9 +66,11 @@ class ClGeneral:
         try:
             assert len(self._defaults) == self.n_par
         except (AttributeError, AssertionError):
-            print("Component: unexpected number of or "
-                  "uninitialized defaults, returning ones")
-            return [1.] * self.n_par
+            print(
+                "Component: unexpected number of or "
+                "uninitialized defaults, returning ones"
+            )
+            return [1.0] * self.n_par
         return self._defaults
 
 
@@ -91,24 +93,23 @@ class ClAnalytic(ClGeneral):
     """
 
     def __init__(self, expression: str, **fixed_params: float | None) -> None:
-        self._fixed_params = {k: v for k, v in fixed_params.items()
-                              if v is not None}
+        self._fixed_params = {k: v for k, v in fixed_params.items() if v is not None}
         self._expr = parse_expr(expression).subs(self._fixed_params)
         self._params = sorted([str(s) for s in self._expr.free_symbols])
         self._defaults = []
 
         # If 'ell' is present, first remove it
-        if 'ell' in self._params:
-            self._params.pop(self._params.index('ell'))
+        if "ell" in self._params:
+            self._params.pop(self._params.index("ell"))
         # Next add it at the zero-th position
-        self._params.insert(0, 'ell')
+        self._params.insert(0, "ell")
         # Then create symbols
         symbols = sympy.symbols(self._params)
         # Then remove it again
         self._params.pop(0)
 
         # Create lambda function
-        self._lambda = sympy.lambdify(symbols, self._expr, 'numpy')
+        self._lambda = sympy.lambdify(symbols, self._expr, "numpy")
 
     def __repr__(self) -> str:
         return repr(self._expr)
@@ -137,14 +138,15 @@ class ClPowerLaw(ClAnalytic):
     """
 
     _REF_ALPHA = -0.5
-    _REF_AMP = 1.
+    _REF_AMP = 1.0
 
-    def __init__(self, ell0: float, amp: float | None = None, alpha: float | None = None) -> None:
-        analytic_expr = 'amp * (ell / ell0)**alpha'
+    def __init__(
+        self, ell0: float, amp: float | None = None, alpha: float | None = None
+    ) -> None:
+        analytic_expr = "amp * (ell / ell0)**alpha"
 
-        kwargs = {'ell0': ell0, 'alpha': alpha}
+        kwargs = {"ell0": ell0, "alpha": alpha}
 
         super().__init__(analytic_expr, **kwargs)
 
-        self._set_default_of_free_symbols(alpha=self._REF_ALPHA,
-                                          amp=self._REF_AMP)
+        self._set_default_of_free_symbols(alpha=self._REF_ALPHA, amp=self._REF_AMP)

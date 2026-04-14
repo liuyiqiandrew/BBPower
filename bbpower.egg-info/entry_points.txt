@@ -1,0 +1,2 @@
+[console_scripts]
+bbpower = bbpower.__main__:main

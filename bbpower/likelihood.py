@@ -35,13 +35,17 @@ class Likelihood:
         Fiducial power spectra (required if ``use_handl`` is True).
     """
 
-    def __init__(self, model_func: Callable[[dict], np.ndarray],
-                 param_manager: ParameterManager,
-                 bbdata: np.ndarray, bbnoise: np.ndarray,
-                 invcov: np.ndarray,
-                 matrix_to_vector: Callable[[np.ndarray], np.ndarray],
-                 use_handl: bool,
-                 bbfiducial: np.ndarray | None = None) -> None:
+    def __init__(
+        self,
+        model_func: Callable[[dict], np.ndarray],
+        param_manager: ParameterManager,
+        bbdata: np.ndarray,
+        bbnoise: np.ndarray,
+        invcov: np.ndarray,
+        matrix_to_vector: Callable[[np.ndarray], np.ndarray],
+        use_handl: bool,
+        bbfiducial: np.ndarray | None = None,
+    ) -> None:
         self.model = model_func
         self.params = param_manager
         self.bbdata = bbdata
@@ -93,8 +97,7 @@ class Likelihood:
         dx_vec = []
         for k in range(model_cls.shape[0]):
             C = model_cls[k] + self.bbnoise[k]
-            X = self._h_and_l_transform(C, self.observed_cls[k],
-                                        self.Cfl_sqrt[k])
+            X = self._h_and_l_transform(C, self.observed_cls[k], self.Cfl_sqrt[k])
             if np.any(np.isinf(X)):
                 return [np.inf]
             dx = self.matrix_to_vector(X).flatten()
@@ -102,8 +105,9 @@ class Likelihood:
         return dx_vec
 
     @staticmethod
-    def _h_and_l_transform(C: np.ndarray, Chat: np.ndarray,
-                           Cfl_sqrt: np.ndarray) -> np.ndarray | list:
+    def _h_and_l_transform(
+        C: np.ndarray, Chat: np.ndarray, Cfl_sqrt: np.ndarray
+    ) -> np.ndarray | list:
         """Hamimeche & Lewis likelihood transform.
 
         Taken from Cobaya written by Hamimeche, Lewis and Torrado.
@@ -136,8 +140,7 @@ class Likelihood:
             diag, rot = np.linalg.eigh(rot)
         except np.linalg.LinAlgError:
             return [np.inf]
-        diag = (np.sign(diag - 1) *
-                np.sqrt(2 * np.maximum(0, diag - np.log(diag) - 1)))
+        diag = np.sign(diag - 1) * np.sqrt(2 * np.maximum(0, diag - np.log(diag) - 1))
         Cfl_sqrt.dot(rot, U)
         for i, d in enumerate(diag):
             rot[:, i] = U[:, i] * d
