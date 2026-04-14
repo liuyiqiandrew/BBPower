@@ -1,21 +1,29 @@
+from __future__ import annotations
+
+from collections.abc import Iterator
+
 import numpy as np
-import os
-from scipy.linalg import sqrtm
 
 from bbpipe import PipelineStage
-from .types import NpzFile, FitsFile, YamlFile, DirFile
+from .types import FitsFile, YamlFile, DirFile
 from .fg_model import FGModel
 from .param_manager import ParameterManager
 from .bandpasses import (Bandpass, rotate_cells, rotate_cells_mat,
                          decorrelated_bpass)
+from .likelihood import Likelihood
+from . import samplers
 import sacc
 
 
 class BBCompSep(PipelineStage):
     """
-    Component separation stage
-    This stage does harmonic domain foreground cleaning (e.g. BICEP).
-    The foreground model parameters are defined in the config.yml file.
+    Component separation stage for harmonic-domain foreground cleaning.
+
+    Performs multi-frequency component separation (e.g. BICEP-style) by
+    fitting a parametric foreground and CMB model to cross-frequency power
+    spectra. The foreground/CMB model and its free parameters are defined
+    in the pipeline config file. Sampling is dispatched to the samplers
+    module, which supports multiple backends (emcee, polychord, scipy, etc.).
     """
     name = "BBCompSep"
     inputs = [('cells_coadded', FitsFile),
@@ -28,7 +36,7 @@ class BBCompSep(PipelineStage):
                       'nwalkers': 16, 'r_init': 1.e-3,
                       'sampler': 'emcee', 'bands': 'all'}
 
-    def setup_compsep(self):
+    def setup_compsep(self) -> None:
         """
         Pre-load the data, CMB BB power spectrum, and foreground models.
         """
@@ -38,14 +46,27 @@ class BBCompSep(PipelineStage):
         self.load_cmb()
         self.fg_model = FGModel(self.config)
         self.params = ParameterManager(self.config)
-        if self.use_handl:
-            self.prepare_h_and_l()
-        return
+        self.likelihood = Likelihood(
+            model_func=self.model,
+            param_manager=self.params,
+            bbdata=self.bbdata,
+            bbnoise=self.bbnoise,
+            invcov=self.invcov,
+            matrix_to_vector=self.matrix_to_vector,
+            use_handl=self.use_handl,
+            bbfiducial=getattr(self, 'bbfiducial', None),
+        )
 
-    def get_moments_lmax(self):
+    def get_moments_lmax(self) -> int:
         return self.config['fg_model'].get('moments_lmax', 384)
 
-    def precompute_w3j(self):
+    def precompute_w3j(self) -> None:
+        """Precompute Wigner 3-j symbols for the moment expansion.
+
+        Populates ``self.big_w3j``, a 3-D array of squared Wigner 3-j
+        coefficients indexed by (ell, ell1, ell2), used by the 1x1 and
+        0x2 moment evaluations.
+        """
         from pyshtools.utils import Wigner3j
 
         lmax = self.get_moments_lmax()
@@ -71,10 +92,41 @@ class BBCompSep(PipelineStage):
 
         self.big_w3j = self.big_w3j**2
 
-    def matrix_to_vector(self, mat):
+    def matrix_to_vector(self, mat: np.ndarray) -> np.ndarray:
+        """Extract the upper-triangle elements of symmetric covariance matrices.
+
+        Parameters
+        ----------
+        mat : array_like
+            Array whose last two dimensions are (nmaps, nmaps).
+
+        Returns
+        -------
+        vec : ndarray
+            Upper-triangle elements along the last axis.
+        """
         return mat[..., self.index_ut[0], self.index_ut[1]]
 
-    def vector_to_matrix(self, vec):
+    def vector_to_matrix(self, vec: np.ndarray) -> np.ndarray:
+        """Reconstruct a symmetric matrix from its upper-triangle elements.
+
+        Parameters
+        ----------
+        vec : ndarray
+            1-D or 2-D array of upper-triangle elements produced by
+            ``matrix_to_vector``.
+
+        Returns
+        -------
+        mat : ndarray
+            Symmetric matrix (or batch of matrices) of shape
+            ``(..., nmaps, nmaps)``.
+
+        Raises
+        ------
+        ValueError
+            If *vec* has more than 2 dimensions.
+        """
         if vec.ndim == 1:
             mat = np.zeros([self.nmaps, self.nmaps])
             mat[self.index_ut] = vec
@@ -88,7 +140,20 @@ class BBCompSep(PipelineStage):
             raise ValueError("Input vector can only be 1- or 2-D")
         return mat
 
-    def _freq_pol_iterator(self):
+    def _freq_pol_iterator(self) -> Iterator[tuple[int, int, int, int, int, int, int]]:
+        """Yield index tuples for all unique frequency-polarization pairs.
+
+        Yields
+        ------
+        b1, b2 : int
+            Frequency-band indices.
+        p1, p2 : int
+            Polarization indices.
+        m1, m2 : int
+            Flattened map indices (pol + npol * band).
+        icl : int
+            Running cross-spectrum index.
+        """
         icl = -1
         for b1 in range(self.nfreqs):
             for p1 in range(self.npol):
@@ -103,7 +168,7 @@ class BBCompSep(PipelineStage):
                         icl += 1
                         yield b1, b2, p1, p2, m1, m2, icl
 
-    def parse_sacc_file(self):
+    def parse_sacc_file(self) -> None:
         """
         Reads the data in the sacc file included the power spectra,
         bandpasses, and window functions.
@@ -238,9 +303,8 @@ class BBCompSep(PipelineStage):
                                      self.n_bpws * self.ncross])
         self.invcov = np.linalg.solve(self.bbcovar,
                                       np.identity(len(self.bbcovar)))
-        return
 
-    def load_cmb(self):
+    def load_cmb(self) -> None:
         """
         Loads the CMB BB spectrum as defined in the config file.
         """
@@ -266,9 +330,27 @@ class BBCompSep(PipelineStage):
             self.cmb_tens[ind, ind] = (cmb_bbfile[:, 2][mask] -
                                        cmb_lensingfile[:, 2][mask])
             self.cmb_scal[ind, ind] = cmb_lensingfile[:, 2][mask]
-        return
 
-    def integrate_seds(self, params):
+    def integrate_seds(self, params: dict) -> tuple[np.ndarray, np.ndarray]:
+        """Compute band-averaged foreground SED scaling factors.
+
+        Convolves each foreground component SED with the instrumental
+        bandpasses and, optionally, applies frequency decorrelation.
+
+        Parameters
+        ----------
+        params : dict
+            Current parameter values keyed by name.
+
+        Returns
+        -------
+        fg_scaling : ndarray
+            Shape ``(n_components, n_components, nfreqs, nfreqs)``
+            frequency-frequency scaling matrix for each component pair.
+        rot_matrices : ndarray
+            Polarization rotation matrices from the bandpass convolution,
+            shape ``(n_components, nfreqs, ...)``.
+        """
         single_sed = np.zeros([self.fg_model.n_components,
                                self.nfreqs])
         comp_scaling = np.zeros([self.fg_model.n_components,
@@ -319,7 +401,20 @@ class BBCompSep(PipelineStage):
                                                         single_sed[i_c1])
         return fg_scaling, np.array(rot_matrices)
 
-    def evaluate_power_spectra(self, params):
+    def evaluate_power_spectra(self, params: dict) -> np.ndarray:
+        """Evaluate foreground angular power spectra from the config model.
+
+        Parameters
+        ----------
+        params : dict
+            Current parameter values keyed by name.
+
+        Returns
+        -------
+        fg_pspectra : ndarray
+            Shape ``(n_components, npol, npol, n_ell)`` foreground C_ell
+            for each component, converted from D_ell to C_ell.
+        """
         fg_pspectra = np.zeros([self.fg_model.n_components, self.npol,
                                 self.npol, self.n_ell])
 
@@ -339,7 +434,7 @@ class BBCompSep(PipelineStage):
 
         return fg_pspectra
 
-    def model(self, params):
+    def model(self, params: dict) -> np.ndarray:
         """
         Defines the total model and integrates over
         the bandpasses and windows.
@@ -483,13 +578,29 @@ class BBCompSep(PipelineStage):
 
         return cls_array_list.reshape([self.n_bpws, self.nmaps, self.nmaps])
 
-    def bcls(self, lmax, gamma, amp):
+    def bcls(self, lmax: int, gamma: float, amp: float) -> np.ndarray:
+        """Compute a power-law beta power spectrum for the moment expansion.
+
+        Parameters
+        ----------
+        lmax : int
+            Maximum multipole.
+        gamma : float
+            Power-law tilt (pivot at ell = 80).
+        amp : float
+            Amplitude of the beta spectrum.
+
+        Returns
+        -------
+        bcls : ndarray
+            Beta power spectrum of length *lmax*.
+        """
         ls = np.arange(lmax)
         bcls = np.zeros(len(ls))
         bcls[2:] = (ls[2:] / 80.)**gamma
         return bcls*amp
 
-    def integrate_seds_der(self, params, order=1):
+    def integrate_seds_der(self, params: dict, order: int = 1) -> np.ndarray:
         """
         Define the first order derivative of the SED
         """
@@ -515,7 +626,7 @@ class BBCompSep(PipelineStage):
 
         return fg_scaling_der.T
 
-    def evaluate_1x1(self, params, lmax, cls_cc, cls_bb):
+    def evaluate_1x1(self, params: dict, lmax: int, cls_cc: np.ndarray, cls_bb: np.ndarray) -> np.ndarray:
         """
         Evaluate the 1x1 moment for auto-spectra
         """
@@ -529,7 +640,7 @@ class BBCompSep(PipelineStage):
         moment1x1 = np.dot(np.dot(mat, v_right), v_left) / (4*np.pi)
         return moment1x1
 
-    def evaluate_0x2(self, params, lmax, cls_cc, cls_bb):
+    def evaluate_0x2(self, params: dict, lmax: int, cls_cc: np.ndarray, cls_bb: np.ndarray) -> np.ndarray:
         """
         Evaluate the 0x2 moment for auto-spectra
         Assume power law for beta
@@ -538,325 +649,28 @@ class BBCompSep(PipelineStage):
         prefac = np.sum((2 * ls + 1) * cls_bb) / (4*np.pi)
         return cls_cc[:lmax] * prefac
 
-    def chi_sq_dx(self, params):
+    def run(self) -> None:
+        """Execute the component-separation pipeline stage.
+
+        Copies the config file to the output directory, initialises the
+        data and models via ``setup_compsep``, then dispatches to the
+        configured sampler.
         """
-        Chi^2 likelihood.
-        """
-        model_cls = self.model(params)
-        return self.matrix_to_vector(self.bbdata - model_cls).flatten()
-
-    def prepare_h_and_l(self):
-        fiducial_noise = self.bbfiducial + self.bbnoise
-        self.Cfl_sqrt = np.array([sqrtm(f) for f in fiducial_noise])
-        self.observed_cls = self.bbdata + self.bbnoise
-        return
-
-    def h_and_l_dx(self, params):
-        """
-        Hamimeche and Lewis likelihood.
-        Taken from Cobaya written by H, L and Torrado
-        See: https://github.com/CobayaSampler/cobaya/blob/master/cobaya/likelihoods/_cmblikes_prototype/_cmblikes_prototype.py
-        """
-        model_cls = self.model(params)
-        dx_vec = []
-        for k in range(model_cls.shape[0]):
-            C = model_cls[k] + self.bbnoise[k]
-            X = self.h_and_l(C, self.observed_cls[k], self.Cfl_sqrt[k])
-            if np.any(np.isinf(X)):
-                return [np.inf]
-            dx = self.matrix_to_vector(X).flatten()
-            dx_vec = np.concatenate([dx_vec, dx])
-        return dx_vec
-
-    def h_and_l(self, C, Chat, Cfl_sqrt):
-        try:
-            diag, U = np.linalg.eigh(C)
-        except:
-            return [np.inf]
-        rot = U.T.dot(Chat).dot(U)
-        roots = np.sqrt(diag)
-        for i, root in enumerate(roots):
-            rot[i, :] /= root
-            rot[:, i] /= root
-        U.dot(rot.dot(U.T), rot)
-        try:
-            diag, rot = np.linalg.eigh(rot)
-        except:
-            return [np.inf]
-        diag = (np.sign(diag - 1) *
-                np.sqrt(2 * np.maximum(0, diag - np.log(diag) - 1)))
-        Cfl_sqrt.dot(rot, U)
-        for i, d in enumerate(diag):
-            rot[:, i] = U[:, i] * d
-        return rot.dot(U.T)
-
-    def lnprob(self, par):
-        """
-        Likelihood with priors.
-        """
-        prior = self.params.lnprior(par)
-        if not np.isfinite(prior):
-            return -np.inf
-
-        return prior + self.lnlike(par)
-
-    def lnlike(self, par):
-        """
-        Likelihood without priors. 
-        """
-        params = self.params.build_params(par)
-        if self.use_handl:
-            dx = self.h_and_l_dx(params)
-            if np.any(np.isinf(dx)):
-                return -np.inf
-        else:
-            dx = self.chi_sq_dx(params)
-        like = -0.5 * np.dot(dx, np.dot(self.invcov, dx))
-        
-        return like
-
-    def emcee_sampler(self):
-        """
-        Sample the model with MCMC.
-        """
-        import emcee
-        from multiprocessing import Pool
-
-        fname_temp = self.get_output('output_dir')+'/emcee.npz.h5'
-        backend = emcee.backends.HDFBackend(fname_temp)
-
-        nwalkers = self.config['nwalkers']
-        n_iters = self.config['n_iters']
-        ndim = len(self.params.p0)
-        found_file = os.path.isfile(fname_temp)
-
-        try:
-            nchain = len(backend.get_chain())
-        except AttributeError:
-            found_file = False
-
-        if not found_file:
-            backend.reset(nwalkers, ndim)
-            pos = [self.params.p0 + 1.e-3*np.random.randn(ndim)
-                   for i in range(nwalkers)]
-            nsteps_use = n_iters
-        else:
-            print("Restarting from previous run")
-            pos = None
-            nsteps_use = max(n_iters-nchain, 0)
-
-        with Pool() as pool:
-            import time
-            start = time.time()
-            sampler = emcee.EnsembleSampler(nwalkers, ndim,
-                                            self.lnprob,
-                                            backend=backend)
-            if nsteps_use > 0:
-                sampler.run_mcmc(pos, nsteps_use, store=True, progress=False)
-                end = time.time()
-
-        return sampler, end-start
-
-    def polychord_sampler(self):
-        import pypolychord
-        from pypolychord.settings import PolyChordSettings
-        from pypolychord.priors import UniformPrior, GaussianPrior
-
-        ndim = len(self.params.p0)
-        nder = 0
-
-        # Log-likelihood compliant with PolyChord's input
-        def likelihood(theta):
-            return self.lnlike(theta), [0]
-
-        def prior(hypercube):
-            prior = []
-            for h, pr in zip(hypercube, self.params.p_free_priors):
-                if pr[1] == 'Gaussian':
-                    prior.append(GaussianPrior(float(pr[2][0]), float(pr[2][1]))(h))
-                else:
-                    prior.append(UniformPrior(float(pr[2][0]), float(pr[2][2]))(h))
-            return prior
-
-        # Optional dumper function giving run-time read access to
-        # the live points, dead points, weights and evidences
-        def dumper(live, dead, logweights, logZ, logZerr):
-            print("Last dead point:", dead[-1])
-
-        settings = PolyChordSettings(ndim, nder)
-        settings.base_dir = self.get_output('output_dir')+'/polychord'
-        settings.file_root = 'pch'
-        settings.nlive = self.config['nlive']
-        settings.num_repeats = self.config['nrepeat']
-        settings.do_clustering = False # Assume unimodal posterior
-        settings.boost_posterior = 10  # Increase number of posterior samples
-        settings.nprior = 200          # Draw nprior initial prior samples
-        settings.maximise = True       # Maximize posterior at the end
-        settings.read_resume = False   # Read from resume file of earlier run
-        settings.feedback = 2          # Verbosity {0,1,2,3}
-
-        output = pypolychord.run_polychord(likelihood, ndim, nder, settings, 
-                                           prior, dumper)
-
-        return output
-
-    def minimizer(self):
-        """
-        Find maximum likelihood
-        """
-        from scipy.optimize import minimize
-
-        def chi2(par):
-            c2 = -2*self.lnprob(par)
-            return c2
-
-        res = minimize(chi2, self.params.p0,
-                       method="Powell")
-        return res.x
-
-    def fisher(self):
-        """
-        Evaluate Fisher matrix
-        """
-        import numdifftools as nd
-        from scipy.optimize import minimize
-
-        def chi2(par):
-            c2 = -2*self.lnprob(par)
-            return c2
-
-        res = minimize(chi2, self.params.p0,
-                       method="Powell")
-
-        def lnprobd(p):
-            l = self.lnprob(p)
-            if l == -np.inf:
-                l = -1E100
-            return l
-
-        fisher = - nd.Hessian(lnprobd)(res.x)
-        return res.x, fisher
-
-    def singlepoint(self):
-        """
-        Evaluate at a single point
-        """
-        chi2 = -2*self.lnprob(self.params.p0)
-        return chi2
-
-    def timing(self, n_eval=300):
-        """
-        Evaluate n times and benchmark
-        """
-        import time
-        start = time.time()
-        for i in range(n_eval):
-            self.lnprob(self.params.p0)
-        end = time.time()
-
-        return end-start, (end-start)/n_eval
-    
-    def predicted_spectra(self, at_min=True, save_npz=True):
-        """
-        Evaluates model at a the maximum likelihood and 
-        writes predicted spectra into a numpy array 
-        with shape (nbpws, nmaps, nmaps).
-        """
-        if at_min:
-            sampler = self.minimizer()
-            p = np.array(sampler)
-        else:
-            p = self.params.p0
-        pars = self.params.build_params(p)
-        print(pars)
-        model_cls = self.model(pars)
-        if self.config['bands'] == 'all':
-            tr_names = sorted(list(self.s.tracers.keys()))
-        else:
-            tr_names = self.config['bands']
-        if save_npz:
-            np.savez(self.get_output('output_dir')+'/cells_model.npz',
-                     tracers=tr_names, 
-                     ls=self.ell_b,
-                     dls=model_cls)
-            return
-        s = sacc.Sacc()
-        for it, tn in enumerate(tr_names):
-            t = self.s.tracers[tn]
-            s.add_tracer('NuMap', tn, quantity='cmb_polarization',
-                         spin=2, nu=t.nu, bandpass=t.bandpass,
-                         ell=t.ell, beam=t.beam, nu_unit='GHz',
-                         map_unit='uK_CMB')
-        for b1, b2, p1, p2, m1, m2, ind in self._freq_pol_iterator():
-            cl = model_cls[:, m1, m2]
-            t1 = tr_names[b1]
-            t2 = tr_names[b2]
-            pol1 = self.pols[p1].lower()
-            pol2 = self.pols[p2].lower()
-            cltyp = f'cl_{pol1}{pol2}'
-            win = sacc.BandpowerWindow(self.bpw_l, self.windows[ind].T)
-            s.add_ell_cl(cltyp, t1, t2, self.ell_b, cl, window=win)
-        s.add_covariance(self.bbcovar)
-        s.save_fits(self.get_output('output_dir')+'/cells_model.fits',
-                    overwrite=True)
-        
-        return
-
-    def run(self):
         from shutil import copyfile
         copyfile(self.get_input('config'), self.get_output('config_copy'))
         self.setup_compsep()
-        if self.config.get('sampler') == 'emcee':
-            sampler, timing = self.emcee_sampler()
-            np.savez(self.get_output('output_dir')+'/emcee.npz',
-                     chain=sampler.chain,
-                     names=self.params.p_free_names,
-                     time=timing)
-            print("Finished sampling", timing)
-        elif self.config.get('sampler')=='polychord':
-            sampler = self.polychord_sampler()
-            print("Finished sampling")
-        elif self.config.get('sampler') == 'fisher':
-            p0, fisher = self.fisher()
-            cov = np.linalg.inv(fisher)
-            for i, (n, p) in enumerate(zip(self.params.p_free_names, p0)):
-                print(n+" = %.3lE +- %.3lE" % (p, np.sqrt(cov[i, i])))
-            np.savez(self.get_output('output_dir')+'/fisher.npz',
-                     params=p0, fisher=fisher,
-                     names=self.params.p_free_names)
-        elif self.config.get('sampler') == 'maximum_likelihood':
-            sampler = self.minimizer()
-            chi2 = -2*self.lnprob(sampler)
-            np.savez(self.get_output('output_dir')+'/chi2.npz',
-                     params=sampler,
-                     names=self.params.p_free_names,
-                     chi2=chi2, ndof=len(self.bbcovar))
-            print("Best fit:")
-            for n, p in zip(self.params.p_free_names, sampler):
-                print(n+" = %.3lE" % p)
-            print("Chi2: %.3lE" % chi2)
-        elif self.config.get('sampler') == 'single_point':
-            sampler = self.singlepoint()
-            np.savez(self.get_output('output_dir')+'/single_point.npz',
-                     chi2=sampler, ndof=len(self.bbcovar),
-                     names=self.params.p_free_names)
-            print("Chi2:", sampler, len(self.bbcovar))
-        elif self.config.get('sampler') == 'timing':
-            sampler = self.timing()
-            np.savez(self.get_output('output_dir')+'/timing.npz',
-                     timing=sampler[1],
-                     names=self.params.p_free_names)
-            print("Total time:", sampler[0])
-            print("Time per eval:", sampler[1])
-        elif self.config.get('sampler')=='predicted_spectra':
-            at_min = self.config.get('predict_at_minimum', True)
-            save_npz = not self.config.get('predict_to_sacc', False)
-            sampler = self.predicted_spectra(at_min=at_min, save_npz=save_npz)
-            print("Predicted spectra saved")
-        else:
-            raise ValueError("Unknown sampler")
 
-        return
+        sampler_name = self.config.get('sampler', 'emcee')
+        output_dir = self.get_output('output_dir')
+
+        if sampler_name == 'predicted_spectra':
+            samplers.run_predicted_spectra(
+                self.likelihood, self, self.config, output_dir)
+        elif sampler_name in samplers.SAMPLERS:
+            samplers.SAMPLERS[sampler_name](
+                self.likelihood, self.config, output_dir)
+        else:
+            raise ValueError(f"Unknown sampler: {sampler_name!r}")
 
 
 if __name__ == '__main__':

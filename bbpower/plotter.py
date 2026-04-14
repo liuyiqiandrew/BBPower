@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from bbpipe import PipelineStage
 from .types import FitsFile, DirFile, HTMLFile, NpzFile
 import sacc
@@ -10,6 +12,14 @@ import dominate.tags as dtg
 import os
 
 class BBPlotter(PipelineStage):
+    """Generate diagnostic plots and an HTML summary page.
+
+    Reads coadded, noise, null, and fiducial power spectra plus MCMC
+    chains, and produces bandpass plots, coadded spectrum plots,
+    null-test plots, and likelihood contour plots (via getdist).
+    All plots are saved as PNG files and linked from an HTML page.
+    """
+
     name="BBPlotter"
     inputs=[('cells_coadded_total', FitsFile), ('cells_coadded', FitsFile),
             ('cells_noise', FitsFile), ('cells_null', FitsFile),
@@ -19,7 +29,8 @@ class BBPlotter(PipelineStage):
                     'plot_noise': True, 'plot_nulls': True,
                     'plot_likelihood': True}
 
-    def create_page(self):
+    def create_page(self) -> None:
+        """Create the output directory and initialize the HTML document."""
         # Open plots directory
         if not os.path.isdir(self.get_output('plots')):
             os.mkdir(self.get_output('plots'))
@@ -37,10 +48,11 @@ class BBPlotter(PipelineStage):
             lst+=dtg.li(dtg.a('Coadded power spectra',href='#coadded'))
             if self.config['plot_nulls']:
                 lst+=dtg.li(dtg.a('Null tests',href='#nulls'))
-            if self.config['plot_likelihood']:
+            if self.can_plot_likelihood:
                 lst+=dtg.li(dtg.a('Likelihood',href='#like'))
 
-    def add_bandpasses(self):
+    def add_bandpasses(self) -> None:
+        """Add bandpass summary and per-tracer plots to the HTML page."""
         with self.doc:
             dtg.h2("Bandpasses",id='bandpasses')
             lst=dtg.ul()
@@ -75,7 +87,8 @@ class BBPlotter(PipelineStage):
                 lst+=dtg.li(dtg.a(title,href=fname))
             dtg.div(dtg.a('Back to TOC',href='#contents'))
 
-    def add_coadded(self):
+    def add_coadded(self) -> None:
+        """Add coadded power spectrum plots (total, cross, noise) to the page."""
         with self.doc:
             dtg.h2("Coadded power spectra",id='coadded')
             lst=dtg.ul()
@@ -136,7 +149,8 @@ class BBPlotter(PipelineStage):
 
             dtg.div(dtg.a('Back to TOC',href='#contents'))
                 
-    def add_nulls(self):
+    def add_nulls(self) -> None:
+        """Add null-test power spectrum plots to the page."""
         with self.doc:
             dtg.h2("Null tests",id='nulls')
             lst=dtg.ul()
@@ -162,13 +176,14 @@ class BBPlotter(PipelineStage):
                 plt.xlabel('$\\ell$',fontsize=15)
                 plt.ylabel('$C_\\ell/\\sigma_\\ell$',fontsize=15)
                 plt.legend()
-                plt.savefig(fname,bbox_index='tight')
+                plt.savefig(fname, bbox_inches='tight')
                 plt.close()
                 lst+=dtg.li(dtg.a(title,href=fname))
 
             dtg.div(dtg.a('Back to TOC',href='#contents'))
 
-    def add_contours(self):
+    def add_contours(self) -> None:
+        """Add MCMC posterior contour (triangle) plots using getdist."""
         from getdist import MCSamples
         from getdist import plots as gplots
 
@@ -225,11 +240,13 @@ class BBPlotter(PipelineStage):
 
             dtg.div(dtg.a('Back to TOC',href='#contents'))
 
-    def write_page(self):
+    def write_page(self) -> None:
+        """Write the HTML document to the output file."""
         with open(self.get_output('plots_page'),'w') as f:
             f.write(self.doc.render())
 
-    def read_inputs(self):
+    def read_inputs(self) -> None:
+        """Load all input SACC files and MCMC chains."""
         print("Reading inputs")
         # Power spectra
         self.s_fid=sacc.Sacc.load_fits(self.get_input('cells_fiducial'))
@@ -241,22 +258,29 @@ class BBPlotter(PipelineStage):
         if self.config['plot_nulls']:
             self.s_null=sacc.Sacc.load_fits(self.get_input('cells_null'))
         # Chains
+        self.can_plot_likelihood = False
         if self.config['plot_likelihood']:
-            self.chain=np.load(self.get_input('param_chains'))
+            self.chain = np.load(self.get_input('param_chains'))
+            self.can_plot_likelihood = (
+                'chain' in self.chain.files and 'names' in self.chain.files
+            )
+            if not self.can_plot_likelihood:
+                print("Skipping likelihood plots: param_chains file does not contain MCMC samples.")
 
         self.cols_typ={'ee':'r','eb':'g','be':'y','bb':'b'}
         self.lmx = self.config['lmax_plot']
 
-    def run(self):
+    def run(self) -> None:
+        """Execute the plotting stage."""
         self.read_inputs()
         self.create_page()
         self.add_bandpasses()
         self.add_coadded()
         if self.config['plot_nulls']:
             self.add_nulls()
-        if self.config['plot_likelihood']:
+        if self.can_plot_likelihood:
             self.add_contours()
         self.write_page()
 
-if __name__ == '__main_':
+if __name__ == '__main__':
     cls = PipelineStage.main()

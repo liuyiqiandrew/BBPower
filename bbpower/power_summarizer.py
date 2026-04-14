@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from collections.abc import Iterator
+
 from bbpipe import PipelineStage
 from .types import TextFile, FitsFile
 import sacc
@@ -5,6 +9,14 @@ import numpy as np
 
 
 class BBPowerSummarizer(PipelineStage):
+    """Coadd split power spectra, compute noise and null spectra, and estimate covariances.
+
+    Takes all cross-split spectra from BBPowerSpecter (data and sims),
+    coadds them (total and cross-only), computes noise spectra as the
+    difference, builds null-test combinations, and uses the simulation
+    ensemble to estimate covariance matrices.
+    """
+
     name = "BBPowerSummarizer"
     inputs = [('splits_list', TextFile), ('bandpasses_list', TextFile),
               ('cells_all_splits', FitsFile), ('cells_all_sims', TextFile)]
@@ -15,8 +27,9 @@ class BBPowerSummarizer(PipelineStage):
                       'data_covar_type': 'block_diagonal',
                       'data_covar_diag_order': 3}
 
-    def get_covariance_from_samples(self, v, s, covar_type='dense',
-                                    off_diagonal_cut=0):
+    def get_covariance_from_samples(self, v: np.ndarray, s: sacc.Sacc,
+                                    covar_type: str = 'dense',
+                                    off_diagonal_cut: int = 0) -> None:
         """
         Computes a covariance matrix from a set of samples in the form
         [nsamples, ndata]
@@ -40,10 +53,8 @@ class BBPowerSummarizer(PipelineStage):
                 cov = (cov * cuts[None, :, None, :]).reshape([nd, nd])
         s.add_covariance(cov)
 
-    def init_params(self):
-        """
-        Read some input files to determine the size of the power spectra
-        """
+    def init_params(self) -> None:
+        """Read input files to determine splits, bands, and spectrum dimensions."""
         # Calculate number of splits and number of frequency channels
         self.nsplits = len(open(self.get_input('splits_list'),
                                 'r').readlines())
@@ -101,11 +112,8 @@ class BBPowerSummarizer(PipelineStage):
         self.index_pol = {'E': 0, 'B': 1}
         self.pol_names = ['E', 'B']
 
-    def check_sacc_consistency(self, s):
-        """
-        Checks the consistency of the SACC file and returns number of
-        expected bandpowers.
-        """
+    def check_sacc_consistency(self, s: sacc.Sacc) -> None:
+        """Verify SACC file has the expected bands, splits, and data vector size."""
         bands = []
         splits = []
         for tn, t in s.tracers.items():
@@ -135,13 +143,14 @@ class BBPowerSummarizer(PipelineStage):
             raise ValueError("There's something wrong with "
                              "the SACC data vector")
 
-    def get_windows(self, s):
+    def get_windows(self, s: sacc.Sacc) -> None:
+        """Extract bandpower windows for all band pairs from a SACC file."""
         self.windows = {}
         for b1 in range(self.nbands):
-            n1 = 'band%d_split1' % (b1+1)
+            n1 = f'band{b1+1}_split1'
             for b2 in range(b1, self.nbands):
-                n2 = 'band%d_split1' % (b2+1)
-                xname = 'band%d_band%d' % (b1+1, b2+1)
+                n2 = f'band{b2+1}_split1'
+                xname = f'band{b1+1}_band{b2+1}'
                 self.windows[xname] = {}
                 _, _, ind = s.get_ell_cl('cl_ee', n1, n2, return_ind=True)
                 self.windows[xname]['ee'] = s.get_bandpower_windows(ind)
@@ -151,7 +160,7 @@ class BBPowerSummarizer(PipelineStage):
                 _, _, ind = s.get_ell_cl('cl_bb', n1, n2, return_ind=True)
                 self.windows[xname]['bb'] = s.get_bandpower_windows(ind)
 
-    def get_tracers(self, s):
+    def get_tracers(self, s: sacc.Sacc) -> None:
         """
         Gets two array of tracers: one for coadd SACC files,
         one for null SACC files.
@@ -169,17 +178,17 @@ class BBPowerSummarizer(PipelineStage):
 
         self.t_coadd = []
         for i in range(self.nbands):
-            self.t_coadd.append(tracers_bands['band%d' % (i+1)])
+            self.t_coadd.append(tracers_bands[f'band{i+1}'])
 
         self.t_nulls = []
         self.ind_nulls = {}
         ind_null = 0
         for b in range(self.nbands):
-            t = tracers_bands['band%d' % (b+1)]
+            t = tracers_bands[f'band{b+1}']
             # Loop over unique pairs
             for i in range(self.nsplits):
                 for j in range(i, self.nsplits):
-                    name = 'band%d_null%dm%d' % (b+1, i+1, j+1)
+                    name = f'band{b+1}_null{i+1}m{j+1}'
                     self.ind_nulls[name] = ind_null
                     T = sacc.BaseTracer.make('NuMap', name,
                                              2, t.nu, t.bandpass,
@@ -189,17 +198,27 @@ class BBPowerSummarizer(PipelineStage):
                     self.t_nulls.append(T)
                     ind_null += 1
 
-    def bands_pol_iterator(self, half=True, with_windows=True):
+    def bands_pol_iterator(self, half: bool = True,
+                           with_windows: bool = True) -> Iterator[tuple]:
+        """Yield ``(b1, ip1, b2, ip2, l1, l2, pol_pair, window)`` over band/pol combos.
+
+        Parameters
+        ----------
+        half : bool
+            If True, only yield upper-triangle band combinations.
+        with_windows : bool
+            If True, include bandpower windows in the yielded tuple.
+        """
         pols = ['e', 'b']
         for b1 in range(self.nbands):
-            l1 = 'band%d' % (b1+1)
+            l1 = f'band{b1+1}'
             if half:
                 range_b2 = range(b1, self.nbands)
             else:
                 range_b2 = range(self.nbands)
             for ip1 in range(2):
                 for b2 in range_b2:
-                    l2 = 'band%d' % (b2+1)
+                    l2 = f'band{b2+1}'
                     if (b1 == b2) and half:
                         p2_range = range(ip1, 2)
                     else:
@@ -208,17 +227,18 @@ class BBPowerSummarizer(PipelineStage):
                         x = pols[ip1] + pols[ip2]
                         if with_windows:
                             if b2 >= b1:
-                                bname = 'band%d_band%d' % (b1+1, b2+1)
+                                bname = f'band{b1+1}_band{b2+1}'
                                 x_use = x
                             else:
-                                bname = 'band%d_band%d' % (b2+1, b1+1)
+                                bname = f'band{b2+1}_band{b1+1}'
                                 x_use = x[::-1]
                             win = self.windows[bname][x_use]
                         else:
                             win = None
                         yield b1, ip1, b2, ip2, l1, l2, x, win
 
-    def bands_splits_pol_iterator(self):
+    def bands_splits_pol_iterator(self) -> Iterator[tuple[int, int, int, int, int, int, int, int, str]]:
+        """Yield ``(s1, s2, b1, b2, p1, p2, m1, m2, cl_name)`` over all split/band/pol combos."""
         for b1 in range(self.nbands):
             for b2 in range(b1, self.nbands):
                 for s1 in range(self.nsplits):
@@ -239,22 +259,24 @@ class BBPowerSummarizer(PipelineStage):
                                            self.pol_names[p2].lower())
                                 yield s1, s2, b1, b2, p1, p2, m1, m2, cl_name
 
-    def get_cl_indices(self, s):
+    def get_cl_indices(self, s: sacc.Sacc) -> None:
+        """Build a lookup array mapping (map1, map2, ell_bin) to SACC data indices."""
         self.inds = np.zeros([self.nsplits * self.nbands * 2,
                               self.nsplits * self.nbands * 2,
                               self.n_bpws], dtype=int)
 
         itr = self.bands_splits_pol_iterator()
         for s1, s2, b1, b2, p1, p2, m1, m2, cltyp in itr:
-            t1 = 'band%d_split%d' % (b1+1, s1+1)
-            t2 = 'band%d_split%d' % (b2+1, s2+1)
+            t1 = f'band{b1+1}_split{s1+1}'
+            t2 = f'band{b2+1}_split{s2+1}'
             _, _, ind = s.get_ell_cl(cltyp, t1, t2, return_ind=True)
             self.inds[m1, m2, :] = ind
             if m1 != m2:
                 self.inds[m2, m1, :] = ind
         self.inds = self.inds.flatten()
 
-    def parse_splits_sacc_file(self, s, get_saccs=False, with_windows=False):
+    def parse_splits_sacc_file(self, s: sacc.Sacc, get_saccs: bool = False,
+                               with_windows: bool = False) -> dict:
         """
         Transform a SACC file containing splits into 4 SACC vectors:
         1 that contains the coadded power spectra.
@@ -338,8 +360,8 @@ class BBPowerSummarizer(PipelineStage):
                 itrb = self.bands_pol_iterator(half=False,
                                                with_windows=with_windows)
                 for b1, ip1, b2, ip2, l1, l2, x, win in itrb:
-                    l1s = l1 + '_null%dm%d' % (i+1, j+1)
-                    l2s = l2 + '_null%dm%d' % (k+1, l+1)
+                    l1s = f'{l1}_null{i+1}m{j+1}'
+                    l2s = f'{l2}_null{k+1}m{l+1}'
                     s_nulls.add_ell_cl('cl_' + x, l1s, l2s,
                                        self.ells,
                                        spectra_nulls[i_null, b1, ip1, b2, ip2],
@@ -354,7 +376,8 @@ class BBPowerSummarizer(PipelineStage):
 
         return ret
 
-    def run(self):
+    def run(self) -> None:
+        """Execute the summarizer: coadd data, process sims, compute covariances, save."""
         # Set things up
         print("Init")
         self.init_params()
@@ -422,5 +445,5 @@ class BBPowerSummarizer(PipelineStage):
                                    overwrite=True)
 
 
-if __name__ == '__main_':
+if __name__ == '__main__':
     cls = PipelineStage.main()

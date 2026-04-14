@@ -4,8 +4,8 @@ from getdist import plots, MCSamples
 import getdist
 import matplotlib.pyplot as plt
 import numpy as np
-sys.path.insert(1, f'bbpower')
-from param_manager import ParameterManager
+
+from bbpower.param_manager import ParameterManager
 
 config_dir = f'test/test_out' # Contains "config_copy.yml"
 base_dir = f'test/test_out/param_chains'
@@ -32,7 +32,8 @@ truth = {'A_lens':      1.,
          'amp_s_bb':    2.}
 
 
-overall_config = yaml.load(open(f'{config_dir}/config_copy.yml'), Loader=yaml.FullLoader)
+with open(f'{config_dir}/config_copy.yml') as config_file:
+    overall_config = yaml.safe_load(config_file)
 conf = overall_config.get('BBCompSep', {})
 params = ParameterManager(conf)
 prior = {n:pr for n, pr in zip(params.p_free_names, params.p_free_priors)}
@@ -57,5 +58,4 @@ for i, n in enumerate(names):
         u = truth[names[j]]
         g.subplots[j, i].plot([v], [u], marker='o', color='r')
 g.export(f'{base_dir}_triangle.pdf')
-
 

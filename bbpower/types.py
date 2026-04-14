@@ -1,3 +1,8 @@
+from __future__ import annotations
+
+from typing import Any
+
+
 class DataFile:
     """
     A class representing a DataFile to be made by pipeline stages
@@ -16,7 +21,7 @@ class DataFile:
 
     """
     @classmethod
-    def open(cls, path, mode):
+    def open(cls, path: str, mode: str) -> Any:
         """
         Open a data file.  The base implementation of this function just
         opens and returns a standard python file object.
@@ -39,7 +44,7 @@ class HDFFile(DataFile):
     suffix = 'hdf'
 
     @classmethod
-    def open(cls, path, mode, **kwargs):
+    def open(cls, path: str, mode: str, **kwargs: Any) -> Any:
         import warnings
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -55,7 +60,7 @@ class FitsFile(DataFile):
     suffix = 'fits'
 
     @classmethod
-    def open(cls, path, mode, **kwargs):
+    def open(cls, path: str, mode: str, **kwargs: Any) -> Any:
         import fitsio
         # Fitsio doesn't have pure 'w' modes, just 'rw'.
         # Maybe we should check if the file already exists here?
@@ -106,5 +111,5 @@ class DummyFile(DataFile):
     suffix = 'dum'
 
     @classmethod
-    def open(cls, path, mode, **kwargs):
+    def open(cls, path: str, mode: str, **kwargs: Any) -> Any:
         raise NotImplementedError("Not implemented yet!")

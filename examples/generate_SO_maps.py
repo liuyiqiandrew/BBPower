@@ -1,18 +1,25 @@
-from utils import *
+import argparse
 import os
-import numpy as np
-import noise_calc as nc
-from optparse import OptionParser
-import healpy as hp
 
-parser = OptionParser()
-parser.add_option('--output-dir', dest='dirname', default='none',
-                  type=str, help='Output directory')
-parser.add_option('--seed', dest='seed',  default=1000, type=int,
-                  help='Set to define seed, default=1000')
-parser.add_option('--nside', dest='nside', default=256, type=int,
-                  help='Set to define Nside parameter, default=256')
-(o, args) = parser.parse_args()
+import healpy as hp
+import numpy as np
+
+import noise_calc as nc
+from utils import *
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--output-dir', dest='dirname', default='none',
+                        type=str, help='Output directory')
+    parser.add_argument('--seed', dest='seed', default=1000, type=int,
+                        help='Set to define seed, default=1000')
+    parser.add_argument('--nside', dest='nside', default=256, type=int,
+                        help='Set to define Nside parameter, default=256')
+    return parser.parse_args()
+
+
+o = parse_args()
 
 np.random.seed(o.seed)
 npix = hp.nside2npix(o.nside)

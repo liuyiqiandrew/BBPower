@@ -1,3 +1,8 @@
+from __future__ import annotations
+
+from collections.abc import Iterator
+from types import ModuleType
+
 import fgbuster.component_model as fgc
 import bbpower.fgcls as fgl
 
@@ -11,16 +16,42 @@ class FGModel:
     SED parameters, SED nu0, CMB nu0 normalization, and the foreground
     power spectrum parameters.
     """
-    def __init__(self, config):
+    def __init__(self, config: dict) -> None:
         self.load_foregrounds(config)
-        return
 
-    def component_iterator(self, config):
+    def component_iterator(self, config: dict) -> Iterator[tuple[str, dict]]:
+        """Yield ``(name, component_dict)`` for each foreground component.
+
+        Parameters
+        ----------
+        config : dict
+            Pipeline configuration containing an ``fg_model`` section.
+
+        Yields
+        ------
+        name : str
+            Component key (starts with ``'component_'``).
+        component : dict
+            Component specification from the config.
+        """
         for key, component in config['fg_model'].items():
             if key.startswith('component_'):
                 yield key, component
 
-    def load_foregrounds(self, config):
+    def load_foregrounds(self, config: dict) -> None:
+        """Parse the config and build foreground component models.
+
+        Populates ``self.components``, ``self.component_names``,
+        ``self.component_order``, and ``self.n_components``.
+
+        Parameters
+        ----------
+        config : dict
+            Pipeline configuration.  Must contain ``fg_model`` with one or
+            more ``component_*`` entries, each specifying an SED, Cl model,
+            and optionally cross-correlation, decorrelation, and moment
+            parameters.
+        """
         self.component_names = []
         self.components = {}
         self.component_order = {}
@@ -42,11 +73,12 @@ class FGModel:
             if d_x:
                 for pn, par in d_x.items():
                     if par[0] not in config['fg_model'].keys():
-                        raise KeyError("Component %s " % (par[0]) +
-                                       "is not a valid component" +
-                                       "to correlate %s with" % key)
+                        raise KeyError(
+                            f"Component {par[0]} is not a valid component "
+                            f"to correlate {key} with"
+                        )
                     if par[0] == key:
-                        raise KeyError("%s is cross correlated with itself." % par[0])
+                        raise KeyError(f"{par[0]} is cross correlated with itself.")
                     comp['names_x_dict'][par[0]] = pn
 
             # Loop through SED parameters.
@@ -109,7 +141,7 @@ class FGModel:
             comp['names_moments_dict'] = {}
             d = component.get('moments')
             if d and config['fg_model'].get('use_moments'):
-                comp['moments_pameters'] = component['moments']
+                comp['moments_parameters'] = component['moments']
                 for k, l in component['moments'].items():
                     comp['names_moments_dict'][l[0]] = k
 
@@ -127,11 +159,29 @@ class FGModel:
             self.component_order[key] = i_comp
             i_comp += 1
         self.n_components = len(self.component_names)
-        return
 
 
-def get_function(mod, sed_name):
+def get_function(mod: ModuleType, sed_name: str):
+    """Look up a function by name from a module.
+
+    Parameters
+    ----------
+    mod : module
+        Module to search (e.g. ``fgbuster.component_model`` or ``bbpower.fgcls``).
+    sed_name : str
+        Name of the function or class to retrieve.
+
+    Returns
+    -------
+    callable
+        The requested function or class.
+
+    Raises
+    ------
+    KeyError
+        If the function is not found in the module.
+    """
     try:
         return getattr(mod, sed_name)
     except AttributeError:
-        raise KeyError("Function named %s cannot be found" % (sed_name))
+        raise KeyError(f"Function named {sed_name} cannot be found")
