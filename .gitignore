@@ -1,4 +1,6 @@
-bbpower/__pycache__/
+__pycache__/
+*.pyc
 test/test_out/
+.pytest_cache/
 .conda-py313/
 *~
