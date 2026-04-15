@@ -314,6 +314,9 @@ class BBCompSep(PipelineStage):
         if self.use_handl:
             self.bbnoise = self.vector_to_matrix(v2d_noi)
             self.bbfiducial = self.vector_to_matrix(v2d_fid)
+        else:
+            self.bbnoise = None
+            self.bbfiducial = None
         self.bbcovar = cv2d.reshape(
             [self.n_bpws * self.ncross, self.n_bpws * self.ncross]
         )
@@ -676,7 +679,10 @@ class BBCompSep(PipelineStage):
 
         mat = self.big_w3j
         v_left = np.transpose(v_left, axes=[1, 0, 2])
-        moment1x1 = np.dot(np.dot(mat, v_right), v_left) / (4 * np.pi)
+        # Contract the Wigner-3j tensor with the beta spectrum first; this is
+        # noticeably faster than a pair of generic matrix multiplies here.
+        tmp_moment = np.einsum("...j,j", mat, v_right, optimize="greedy")
+        moment1x1 = np.dot(tmp_moment, v_left) / (4 * np.pi)
         return moment1x1
 
     def evaluate_0x2(

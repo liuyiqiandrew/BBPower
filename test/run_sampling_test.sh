@@ -29,8 +29,8 @@ python -m bbpower BBPlotter \
   --plots_page=./test/test_out/plots_page.html \
   --config=./test/test_config_sampling.yml
 
-# Check the final plots exist
-if [ ! -f ./test/test_out/plots.dir/triangle.png ]; then
+# Check the optimizer output and plots page exist
+if [ ! -f ./test/test_out/chi2.npz ] || [ ! -f ./test/test_out/plots_page.html ]; then
     echo "Test did not pass"
 else
     echo "Test passed"

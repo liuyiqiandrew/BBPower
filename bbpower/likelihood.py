@@ -23,8 +23,9 @@ class Likelihood:
         Manages free/fixed parameters and priors.
     bbdata : np.ndarray
         Observed data power spectra, shape ``(n_bpws, nmaps, nmaps)``.
-    bbnoise : np.ndarray
+    bbnoise : np.ndarray or None
         Noise power spectra, shape ``(n_bpws, nmaps, nmaps)``.
+        Required when ``use_handl`` is True; may be None for chi-squared mode.
     invcov : np.ndarray
         Inverse covariance matrix.
     matrix_to_vector : callable
@@ -40,7 +41,7 @@ class Likelihood:
         model_func: Callable[[dict], np.ndarray],
         param_manager: ParameterManager,
         bbdata: np.ndarray,
-        bbnoise: np.ndarray,
+        bbnoise: np.ndarray | None,
         invcov: np.ndarray,
         matrix_to_vector: Callable[[np.ndarray], np.ndarray],
         use_handl: bool,

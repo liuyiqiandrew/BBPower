@@ -112,6 +112,37 @@ class TestChiSquared:
         val = lik.lnlike(lik.params.p0)
         assert np.isfinite(val)
 
+    def test_chi2_with_none_bbnoise(self):
+        """chi2 mode works when bbnoise is None (regression test)."""
+        n_bpws, nmaps = 5, 2
+        rng = np.random.default_rng(99)
+        raw = rng.random((n_bpws, nmaps, nmaps))
+        bbdata = np.array([r @ r.T for r in raw]) + 0.5 * np.eye(nmaps)
+
+        index_ut = np.triu_indices(nmaps)
+        ncross = len(index_ut[0])
+        invcov = np.eye(n_bpws * ncross)
+
+        config = {
+            "pol_channels": ["B"],
+            "cmb_model": {"params": {"r": ["r", "tophat", [-1, 0, 1]]}},
+            "fg_model": {},
+        }
+        pm = ParameterManager(config)
+
+        lik = Likelihood(
+            model_func=lambda params: bbdata,
+            param_manager=pm,
+            bbdata=bbdata,
+            bbnoise=None,
+            invcov=invcov,
+            matrix_to_vector=lambda mat: mat[..., index_ut[0], index_ut[1]],
+            use_handl=False,
+            bbfiducial=None,
+        )
+        val = lik.lnlike(pm.p0)
+        assert val == pytest.approx(0.0)
+
 
 # ---------------------------------------------------------------------------
 # Log-posterior tests

@@ -1,7 +1,11 @@
 __pycache__/
-*.pyc
-test/test_out/
+*.py[cod]
 .pytest_cache/
+
+test/test_out*/
+
 .conda-py313/
-*__pycache__*
+.claude/
+
+.nfs*
 *~
