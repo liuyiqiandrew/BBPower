@@ -13,6 +13,23 @@ STAGE_MODULES: dict[str, str] = {
 
 
 def get_stage_class(stage_name: str) -> Any:
+    """Import and return the pipeline stage class for *stage_name*.
+
+    Parameters
+    ----------
+    stage_name : str
+        Registered name of the stage (e.g. ``'BBCompSep'``).
+
+    Returns
+    -------
+    type
+        The ``PipelineStage`` subclass.
+
+    Raises
+    ------
+    KeyError
+        If *stage_name* is not in ``STAGE_MODULES``.
+    """
     try:
         module_name = STAGE_MODULES[stage_name]
     except KeyError as exc:

@@ -64,6 +64,7 @@ class BBCompSep(PipelineStage):
         )
 
     def get_moments_lmax(self) -> int:
+        """Return the maximum multipole for the moment expansion."""
         return self.config["fg_model"].get("moments_lmax", 384)
 
     def precompute_w3j(self) -> None:
@@ -174,9 +175,11 @@ class BBCompSep(PipelineStage):
                         yield b1, b2, p1, p2, m1, m2, icl
 
     def parse_sacc_file(self) -> None:
-        """
-        Reads the data in the sacc file included the power spectra,
-        bandpasses, and window functions.
+        """Read power spectra, bandpasses, and window functions from SACC files.
+
+        Populates ``self.bbdata``, ``self.bbnoise``, ``self.bbcovar``,
+        ``self.invcov``, ``self.bpss``, ``self.windows``, ``self.ell_b``,
+        ``self.bpw_l``, and related attributes needed by the likelihood.
         """
         # Decide if you're using H&L
         self.use_handl = self.config["likelihood_type"] == "h&l"
@@ -323,8 +326,10 @@ class BBCompSep(PipelineStage):
         self.invcov = np.linalg.solve(self.bbcovar, np.identity(len(self.bbcovar)))
 
     def load_cmb(self) -> None:
-        """
-        Loads the CMB BB spectrum as defined in the config file.
+        """Load CMB tensor, lensing, and scalar template spectra from files.
+
+        Reads paths from ``self.config['cmb_model']['cmb_templates']`` and
+        populates ``self.cmb_tens``, ``self.cmb_lens``, and ``self.cmb_scal``.
         """
         cmb_lensingfile = np.loadtxt(self.config["cmb_model"]["cmb_templates"][0])
         cmb_bbfile = np.loadtxt(self.config["cmb_model"]["cmb_templates"][1])
@@ -462,9 +467,17 @@ class BBCompSep(PipelineStage):
         return fg_pspectra
 
     def model(self, params: dict) -> np.ndarray:
-        """
-        Defines the total model and integrates over
-        the bandpasses and windows.
+        """Compute the full CMB + foreground model integrated over bandpasses and windows.
+
+        Parameters
+        ----------
+        params : dict
+            Named parameter dictionary (CMB and foreground parameters).
+
+        Returns
+        -------
+        np.ndarray
+            Model bandpowers with shape ``(n_ell, ncross_freq, ncross_freq)``.
         """
         # [npol,npol,nell]
         cmb_cell = (
@@ -643,8 +656,19 @@ class BBCompSep(PipelineStage):
         return bcls * amp
 
     def integrate_seds_der(self, params: dict, order: int = 1) -> np.ndarray:
-        """
-        Define the first order derivative of the SED
+        """Compute band-averaged SED derivatives for the moment expansion.
+
+        Parameters
+        ----------
+        params : dict
+            Named parameter dictionary.
+        order : int
+            Derivative order (1 or 2).
+
+        Returns
+        -------
+        np.ndarray
+            SED derivative matrix of shape ``(nfreqs, n_components)``.
         """
         fg_scaling_der = np.zeros([self.fg_model.n_components, self.nfreqs])
 
@@ -669,8 +693,23 @@ class BBCompSep(PipelineStage):
     def evaluate_1x1(
         self, params: dict, lmax: int, cls_cc: np.ndarray, cls_bb: np.ndarray
     ) -> np.ndarray:
-        """
-        Evaluate the 1x1 moment for auto-spectra
+        """Evaluate the first-order (1x1) moment expansion correction.
+
+        Parameters
+        ----------
+        params : dict
+            Named parameter dictionary.
+        lmax : int
+            Maximum multipole for the expansion.
+        cls_cc : np.ndarray
+            Cross-component power spectra.
+        cls_bb : np.ndarray
+            Beta auto-spectrum (spectral index variance).
+
+        Returns
+        -------
+        np.ndarray
+            1x1 moment correction term.
         """
 
         ls = np.arange(lmax)
@@ -688,9 +727,25 @@ class BBCompSep(PipelineStage):
     def evaluate_0x2(
         self, params: dict, lmax: int, cls_cc: np.ndarray, cls_bb: np.ndarray
     ) -> np.ndarray:
-        """
-        Evaluate the 0x2 moment for auto-spectra
-        Assume power law for beta
+        """Evaluate the zeroth-by-second-order (0x2) moment correction.
+
+        Assumes a power-law spectral index field.
+
+        Parameters
+        ----------
+        params : dict
+            Named parameter dictionary.
+        lmax : int
+            Maximum multipole for the expansion.
+        cls_cc : np.ndarray
+            Cross-component power spectra.
+        cls_bb : np.ndarray
+            Beta auto-spectrum (spectral index variance).
+
+        Returns
+        -------
+        np.ndarray
+            0x2 moment correction term.
         """
         ls = np.arange(lmax)
         prefac = np.sum((2 * ls + 1) * cls_bb) / (4 * np.pi)

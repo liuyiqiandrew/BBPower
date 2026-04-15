@@ -304,9 +304,11 @@ class BBPowerSpecter(PipelineStage):
         return w
 
     def get_map_label(self, band: int, split: int) -> str:
+        """Return the SACC tracer name for a (band, split) pair."""
         return f"band{band+1}_split{split+1}"
 
     def get_workspace_label(self, band1: int, band2: int) -> str:
+        """Return the canonical workspace key for a band pair (order-independent)."""
         b1 = min(band1, band2)
         b2 = max(band1, band2)
         return f"b{b1+1}_b{b2+1}"
@@ -358,7 +360,7 @@ class BBPowerSpecter(PipelineStage):
                         l2 = self.get_map_label(b2, s2)
                         yield (b1, b2, s1, s2, l1, l2)
 
-    def get_sacc_tracers(self) -> list:
+    def get_sacc_tracers(self) -> list[Any]:
         """
         Create SACC tracer objects for all band/split combinations.
 
@@ -390,7 +392,7 @@ class BBPowerSpecter(PipelineStage):
                 sacc_t.append(T)
         return sacc_t
 
-    def get_sacc_windows(self) -> dict:
+    def get_sacc_windows(self) -> dict[str, dict[str, Any]]:
         """
         Extract bandpower window functions from all workspaces.
 

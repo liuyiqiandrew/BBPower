@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import Any
 
 from bbpipe import PipelineStage
 from .types import TextFile, FitsFile
@@ -44,9 +45,18 @@ class BBPowerSummarizer(PipelineStage):
         covar_type: str = "dense",
         off_diagonal_cut: int = 0,
     ) -> None:
-        """
-        Computes a covariance matrix from a set of samples in the form
-        [nsamples, ndata]
+        """Estimate a covariance matrix from simulation samples and attach it to *s*.
+
+        Parameters
+        ----------
+        v : np.ndarray
+            Sample array of shape ``(n_samples, n_data)``.
+        s : sacc.Sacc
+            SACC object to receive the covariance via ``add_covariance``.
+        covar_type : str
+            ``'dense'``, ``'diagonal'``, or ``'block_diagonal'``.
+        off_diagonal_cut : int
+            Number of off-diagonal blocks to retain (``block_diagonal`` only).
         """
         if covar_type == "diagonal":
             cov = np.diag(np.std(v, axis=0) ** 2)
@@ -124,7 +134,19 @@ class BBPowerSummarizer(PipelineStage):
         self.pol_names = ["E", "B"]
 
     def check_sacc_consistency(self, s: sacc.Sacc) -> None:
-        """Verify SACC file has the expected bands, splits, and data vector size."""
+        """Verify SACC file has the expected bands, splits, and data vector size.
+
+        Parameters
+        ----------
+        s : sacc.Sacc
+            SACC object to validate.
+
+        Raises
+        ------
+        ValueError
+            If the number of tracers, bands, splits, or data vector length
+            does not match expectations.
+        """
         bands = []
         splits = []
         for tn, t in s.tracers.items():
@@ -175,9 +197,15 @@ class BBPowerSummarizer(PipelineStage):
                 self.windows[xname]["bb"] = s.get_bandpower_windows(ind)
 
     def get_tracers(self, s: sacc.Sacc) -> None:
-        """
-        Gets two array of tracers: one for coadd SACC files,
-        one for null SACC files.
+        """Build tracer arrays for coadded and null SACC files.
+
+        Populates ``self.t_coadd`` (one tracer per band) and
+        ``self.t_nulls`` (one tracer per null-test combination).
+
+        Parameters
+        ----------
+        s : sacc.Sacc
+            Source SACC file containing per-split tracers.
         """
         tracers_bands = {}
         for tn, t in s.tracers.items():
@@ -226,7 +254,7 @@ class BBPowerSummarizer(PipelineStage):
 
     def bands_pol_iterator(
         self, half: bool = True, with_windows: bool = True
-    ) -> Iterator[tuple]:
+    ) -> Iterator[tuple[int, int, int, int, str, str, str, Any]]:
         """Yield ``(b1, ip1, b2, ip2, l1, l2, pol_pair, window)`` over band/pol combos.
 
         Parameters
@@ -292,7 +320,13 @@ class BBPowerSummarizer(PipelineStage):
                                 yield s1, s2, b1, b2, p1, p2, m1, m2, cl_name
 
     def get_cl_indices(self, s: sacc.Sacc) -> None:
-        """Build a lookup array mapping (map1, map2, ell_bin) to SACC data indices."""
+        """Build a lookup array mapping (map1, map2, ell_bin) to SACC data indices.
+
+        Parameters
+        ----------
+        s : sacc.Sacc
+            SACC object whose data vector defines the index mapping.
+        """
         self.inds = np.zeros(
             [
                 self.nsplits * self.nbands * 2,
@@ -315,12 +349,23 @@ class BBPowerSummarizer(PipelineStage):
     def parse_splits_sacc_file(
         self, s: sacc.Sacc, get_saccs: bool = False, with_windows: bool = False
     ) -> dict:
-        """
-        Transform a SACC file containing splits into 4 SACC vectors:
-        1 that contains the coadded power spectra.
-        1 that contains coadded power spectra for cross-split only.
-        1 that contains an estimate of the noise power spectrum.
-        1 that contains all null tests
+        """Transform a per-split SACC file into coadded, cross-only, noise, and null vectors.
+
+        Parameters
+        ----------
+        s : sacc.Sacc
+            Input SACC file with all split cross-spectra.
+        get_saccs : bool
+            If True, also return full SACC objects for each output vector.
+        with_windows : bool
+            If True, include bandpower windows in the returned SACC objects.
+
+        Returns
+        -------
+        dict
+            Dictionary with keys ``'coadd_total'``, ``'coadd_cross'``,
+            ``'noise'``, ``'nulls'`` mapping to data arrays (and optionally
+            SACC objects).
         """
 
         # Check we have the right number of bands, splits,
@@ -372,7 +417,6 @@ class BBPowerSummarizer(PipelineStage):
 
         ret = {}
         if get_saccs:
-
             s_total = sacc.Sacc()
             s_xcorr = sacc.Sacc()
             s_noise = sacc.Sacc()

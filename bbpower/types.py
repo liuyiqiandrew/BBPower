@@ -31,6 +31,17 @@ class DataFile:
         (like fitsio.FITS), or, for more specific data types, return an
         instance of the class itself to use as an intermediary for the file.
 
+        Parameters
+        ----------
+        path : str
+            Filesystem path to the file.
+        mode : str
+            File open mode (e.g. ``'r'``, ``'w'``).
+
+        Returns
+        -------
+        Any
+            An open file handle whose type depends on the subclass.
         """
         return open(path, mode)
 
@@ -47,6 +58,22 @@ class HDFFile(DataFile):
 
     @classmethod
     def open(cls, path: str, mode: str, **kwargs: Any) -> Any:
+        """Open an HDF5 file via *h5py*.
+
+        Parameters
+        ----------
+        path : str
+            Filesystem path to the HDF5 file.
+        mode : str
+            File open mode (e.g. ``'r'``, ``'w'``).
+        **kwargs : Any
+            Extra keyword arguments forwarded to ``h5py.File``.
+
+        Returns
+        -------
+        h5py.File
+            The opened HDF5 file handle.
+        """
         import warnings
 
         with warnings.catch_warnings():
@@ -65,6 +92,23 @@ class FitsFile(DataFile):
 
     @classmethod
     def open(cls, path: str, mode: str, **kwargs: Any) -> Any:
+        """Open a FITS file via *fitsio*.
+
+        Parameters
+        ----------
+        path : str
+            Filesystem path to the FITS file.
+        mode : str
+            File open mode. ``'w'`` is automatically converted to ``'rw'``
+            because fitsio does not support a pure write mode.
+        **kwargs : Any
+            Extra keyword arguments forwarded to ``fitsio.FITS``.
+
+        Returns
+        -------
+        fitsio.FITS
+            The opened FITS file handle.
+        """
         import fitsio
 
         # Fitsio doesn't have pure 'w' modes, just 'rw'.
@@ -91,25 +135,19 @@ class YamlFile(DataFile):
 
 
 class NpzFile(DataFile):
-    """
-    A data file in yaml format.
-    """
+    """A data file in NumPy compressed (``.npz``) format."""
 
     suffix = "npz"
 
 
 class DirFile(DataFile):
-    """
-    A dummy type
-    """
+    """A pseudo-file type representing an output directory."""
 
     suffix = "dir"
 
 
 class HTMLFile(DataFile):
-    """
-    A dummy type
-    """
+    """A data file in HTML format."""
 
     suffix = "html"
 
@@ -123,4 +161,11 @@ class DummyFile(DataFile):
 
     @classmethod
     def open(cls, path: str, mode: str, **kwargs: Any) -> Any:
+        """Open is not supported for dummy files.
+
+        Raises
+        ------
+        NotImplementedError
+            Always raised.
+        """
         raise NotImplementedError("Not implemented yet!")

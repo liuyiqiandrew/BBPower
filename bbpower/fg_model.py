@@ -18,6 +18,14 @@ class FGModel:
     """
 
     def __init__(self, config: dict) -> None:
+        """Initialize the foreground model from a pipeline configuration.
+
+        Parameters
+        ----------
+        config : dict
+            Pipeline configuration containing an ``fg_model`` section with
+            component definitions (SEDs, Cl templates, parameters).
+        """
         self.load_foregrounds(config)
 
     def component_iterator(self, config: dict) -> Iterator[tuple[str, dict]]:
@@ -158,7 +166,7 @@ class FGModel:
         self.n_components = len(self.component_names)
 
 
-def get_function(mod: ModuleType, sed_name: str):
+def get_function(mod: ModuleType, sed_name: str) -> type:
     """Look up a function by name from a module.
 
     Parameters

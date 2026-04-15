@@ -5,7 +5,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from bbpower.bandpasses import Bandpass, decorrelated_bpass, rotate_cells_mat
+from bbpower.bandpasses import (
+    Bandpass,
+    decorrelated_bpass,
+    rotate_cells,
+    rotate_cells_mat,
+)
 
 
 class TestSedCmbRj:
@@ -159,6 +164,48 @@ class TestRotateCellsMat:
         cls = np.ones((5, 2, 2))
         result = rotate_cells_mat(mat, None, cls)
         np.testing.assert_allclose(result, -cls)
+
+
+class TestRotateCells:
+    """Tests for the rotate_cells convenience wrapper."""
+
+    def test_no_rotation(self, make_bandpass):
+        """Without angle params, rotate_cells returns unchanged spectra."""
+        bp1 = make_bandpass(nu_center=90.0)
+        bp2 = make_bandpass(nu_center=150.0)
+        cls = np.array([[1.0, 0.5], [0.5, 2.0]])
+        result = rotate_cells(bp1, bp2, cls, {})
+        np.testing.assert_allclose(result, cls)
+
+    def test_with_angle(self, make_bandpass):
+        """With angle params, rotate_cells changes the spectrum."""
+        config = {
+            "systematics": {
+                "bandpasses": {
+                    "bandpass_1": {
+                        "parameters": {
+                            "alpha_1": ["angle", "tophat", [-10.0, 0.0, 10.0]]
+                        }
+                    },
+                    "bandpass_2": {
+                        "parameters": {
+                            "alpha_2": ["angle", "tophat", [-10.0, 0.0, 10.0]]
+                        }
+                    },
+                }
+            }
+        }
+        bp1 = make_bandpass(nu_center=90.0, bp_number=1, config=config)
+        bp2 = make_bandpass(nu_center=150.0, bp_number=2, config=config)
+        # cls must be (n_ell, npol, npol)
+        cls = np.zeros((5, 2, 2))
+        cls[:, 0, 0] = 1.0  # EE = 1
+        cls[:, 1, 1] = 1.0  # BB = 1
+        params = {"alpha_1": 10.0, "alpha_2": 5.0}
+        result = rotate_cells(bp1, bp2, cls, params)
+        assert result.shape == cls.shape
+        # With angles, off-diagonal (EB/BE) should be nonzero
+        assert not np.allclose(result[:, 0, 1], 0.0)
 
 
 class TestDecorrelatedBpass:

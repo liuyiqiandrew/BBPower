@@ -73,7 +73,9 @@ class BBPlotter(PipelineStage):
             plt.figure()
             plt.title(title, fontsize=14)
             for n, t in self.s_fid.tracers.items():
-                nu_mean = np.sum(t.bandpass * t.nu**3) / np.sum(t.bandpass * t.nu**2)
+                nu_mean = np.sum(t.bandpass * t.nu**3) / np.sum(
+                    t.bandpass * t.nu**2
+                )
                 plt.plot(
                     t.nu,
                     t.bandpass / np.amax(t.bandpass),
@@ -103,7 +105,12 @@ class BBPlotter(PipelineStage):
             dtg.div(dtg.a("Back to TOC", href="#contents"))
 
     def add_coadded(self) -> None:
-        """Add coadded power spectrum plots (total, cross, noise) to the page."""
+        """Add coadded power spectrum plots (total, cross, noise) to the page.
+
+        For each unique band pair, plots EE/EB/BE/BB spectra alongside the
+        fiducial model. Noise and total-coadded curves are included when
+        enabled in the config.
+        """
         with self.doc:
             dtg.h2("Coadded power spectra", id="coadded")
             lst = dtg.ul()
@@ -222,7 +229,12 @@ class BBPlotter(PipelineStage):
             dtg.div(dtg.a("Back to TOC", href="#contents"))
 
     def add_contours(self) -> None:
-        """Add MCMC posterior contour (triangle) plots using getdist."""
+        """Add MCMC posterior contour (triangle) plots using getdist.
+
+        Reads chains from ``self.chain`` and generates a triangle plot via
+        ``getdist.MCSamples``. Skipped if the chain file does not contain
+        MCMC samples (e.g. for non-sampling runs).
+        """
         from getdist import MCSamples
         from getdist import plots as gplots
 
@@ -293,7 +305,12 @@ class BBPlotter(PipelineStage):
             f.write(self.doc.render())
 
     def read_inputs(self) -> None:
-        """Load all input SACC files and MCMC chains."""
+        """Load all input SACC files and MCMC chains.
+
+        Populates ``self.s_fid``, ``self.s_cd_x``, and optionally
+        ``self.s_cd_t``, ``self.s_cd_n``, ``self.s_null``, and
+        ``self.chain`` depending on config flags.
+        """
         print("Reading inputs")
         # Power spectra
         self.s_fid = sacc.Sacc.load_fits(self.get_input("cells_fiducial"))

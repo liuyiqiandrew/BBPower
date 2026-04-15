@@ -11,6 +11,9 @@ import numpy as np
 import pytest
 
 from bbpower.compsep import BBCompSep
+from bbpower.bandpasses import Bandpass
+from bbpower.fg_model import FGModel
+from bbpower.fgcls import ClPowerLaw
 
 
 # ---------------------------------------------------------------------------
@@ -197,3 +200,80 @@ class TestGetMomentsLmax:
         cs = _make_compsep()
         cs._configs = {"fg_model": {"moments_lmax": 192}}
         assert cs.get_moments_lmax() == 192
+
+
+# ---------------------------------------------------------------------------
+# integrate_seds
+# ---------------------------------------------------------------------------
+def _make_compsep_with_fg(
+    bb_only_config: dict,
+    make_bandpass,
+) -> tuple[BBCompSep, dict]:
+    """Build a BBCompSep wired with FGModel and Bandpasses for SED tests."""
+    nfreqs = 2
+    npol = 1
+    nmaps = nfreqs * npol
+    cs = _make_compsep(nmaps=nmaps, nfreqs=nfreqs, npol=npol)
+    cs._configs = bb_only_config
+
+    # Build real FGModel from the config
+    cs.fg_model = FGModel(bb_only_config)
+
+    # Build real Bandpass objects at two different frequencies
+    cs.bpss = [
+        make_bandpass(nu_center=90.0, bp_number=0, config=bb_only_config),
+        make_bandpass(nu_center=150.0, bp_number=1, config=bb_only_config),
+    ]
+
+    # Build parameter dict at fiducial values
+    from bbpower.param_manager import ParameterManager
+
+    pm = ParameterManager(bb_only_config)
+    params = pm.build_params(pm.p0)
+    return cs, params
+
+
+class TestIntegrateSeds:
+    """Tests for BBCompSep.integrate_seds."""
+
+    def test_output_shapes(self, bb_only_config, make_bandpass) -> None:
+        """fg_scaling has shape (nc, nc, nf, nf)."""
+        cs, params = _make_compsep_with_fg(bb_only_config, make_bandpass)
+        fg_scaling, rot = cs.integrate_seds(params)
+        nc = cs.fg_model.n_components
+        nf = cs.nfreqs
+        assert fg_scaling.shape == (nc, nc, nf, nf)
+
+    def test_diagonal_positive(self, bb_only_config, make_bandpass) -> None:
+        """Auto-component scaling (diagonal) is non-negative."""
+        cs, params = _make_compsep_with_fg(bb_only_config, make_bandpass)
+        fg_scaling, _ = cs.integrate_seds(params)
+        for ic in range(cs.fg_model.n_components):
+            diag = fg_scaling[ic, ic]
+            assert np.all(diag >= 0)
+
+
+class TestEvaluatePowerSpectra:
+    """Tests for BBCompSep.evaluate_power_spectra."""
+
+    def test_output_shape(self, bb_only_config, make_bandpass) -> None:
+        """Output shape matches (n_components, npol, npol, n_ell)."""
+        cs, params = _make_compsep_with_fg(bb_only_config, make_bandpass)
+        n_ell = 10
+        cs.n_ell = n_ell
+        cs.bpw_l = np.arange(2, 2 + n_ell)
+        cs.dl2cl = 1.0 / (cs.bpw_l * (cs.bpw_l + 1) / (2 * np.pi))
+        cs.pol_order = {"B": 0}
+        result = cs.evaluate_power_spectra(params)
+        assert result.shape == (cs.fg_model.n_components, 1, 1, n_ell)
+
+    def test_nonzero(self, bb_only_config, make_bandpass) -> None:
+        """At fiducial parameters, power spectra are nonzero."""
+        cs, params = _make_compsep_with_fg(bb_only_config, make_bandpass)
+        n_ell = 10
+        cs.n_ell = n_ell
+        cs.bpw_l = np.arange(2, 2 + n_ell)
+        cs.dl2cl = 1.0 / (cs.bpw_l * (cs.bpw_l + 1) / (2 * np.pi))
+        cs.pol_order = {"B": 0}
+        result = cs.evaluate_power_spectra(params)
+        assert np.any(result != 0)

@@ -17,6 +17,13 @@ def _print_usage() -> None:
 
 
 def main() -> int:
+    """Parse the CLI arguments and run the requested pipeline stage.
+
+    Returns
+    -------
+    int
+        Exit code: 0 on success, 1 for usage errors, 2 for unknown stages.
+    """
     if len(sys.argv) < 2 or sys.argv[1] in {"-h", "--help"}:
         _print_usage()
         return 1

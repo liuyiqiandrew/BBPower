@@ -59,12 +59,18 @@ class _MockSEDBase:
     def __init__(self, **kwargs):
         self._kwargs = kwargs
 
+    @property
+    def params(self):
+        """Return names of free (None-valued) parameters, matching fgbuster API."""
+        return [k for k, v in self._kwargs.items() if v is None and k != "units"]
+
     def eval(self, nu, *args):
         return np.ones_like(np.asarray(nu, dtype=float))
 
 
 class _MockCMB(_MockSEDBase):
     def __init__(self, units="K_RJ"):
+        super().__init__(units=units)
         self._units = units
 
     def eval(self, nu, *args):
@@ -109,9 +115,155 @@ def _inject_mock_fgbuster():
         sys.modules["fgbuster.component_model"] = fgc
 
 
+# ---------------------------------------------------------------------------
+# Mock sacc
+# ---------------------------------------------------------------------------
+class _MockDataPoint:
+    def __init__(self, data_type: str = "cl_bb", tracers: tuple = ("t1", "t2")):
+        self.data_type = data_type
+        self.tracers = tracers
+
+
+class _MockBandpowerWindow:
+    def __init__(self, ells: np.ndarray, weight: np.ndarray):
+        self.values = weight
+        self.ells = ells
+
+
+class _MockCovariance:
+    def __init__(self, covmat: np.ndarray | None = None):
+        self.covmat = covmat if covmat is not None else np.array([[]])
+
+
+class _MockSacc:
+    """Minimal stand-in for ``sacc.Sacc``."""
+
+    def __init__(self):
+        self.tracers = {}
+        self.mean = np.array([])
+        self.data = []
+        self.covariance = _MockCovariance()
+
+    @classmethod
+    def load_fits(cls, path: str) -> "_MockSacc":
+        return cls()
+
+    def get_ell_cl(self, *args, **kwargs):
+        if kwargs.get("return_ind"):
+            return np.array([]), np.array([]), np.array([], dtype=int)
+        if kwargs.get("return_cov"):
+            return np.array([]), np.array([]), np.array([[]])
+        return np.array([]), np.array([])
+
+    def get_tracer_combinations(self):
+        return []
+
+    def add_covariance(self, cov):
+        self.covariance = _MockCovariance(cov)
+
+    def indices(self, *args, **kwargs):
+        return np.array([], dtype=int)
+
+    def get_bandpower_windows(self, indices=None):
+        return _MockBandpowerWindow(np.array([]), np.array([[]]))
+
+    def add_tracer(self, *args, **kwargs):
+        pass
+
+    def add_ell_cl(self, *args, **kwargs):
+        pass
+
+    def save_fits(self, path, overwrite=False):
+        pass
+
+
+class _MockBaseTracer:
+    @staticmethod
+    def make(*args, **kwargs):
+        return type(
+            "Tracer",
+            (),
+            {
+                "nu": np.array([]),
+                "bandpass": np.array([]),
+                "ell": np.array([]),
+                "beam": np.array([]),
+                "bandpass_extra": {},
+            },
+        )()
+
+
+def _inject_mock_sacc():
+    if "sacc" not in sys.modules:
+        mod = types.ModuleType("sacc")
+        mod.Sacc = _MockSacc
+        mod.BandpowerWindow = _MockBandpowerWindow
+        mod.BaseTracer = _MockBaseTracer
+        sys.modules["sacc"] = mod
+
+
+# ---------------------------------------------------------------------------
+# Mock healpy
+# ---------------------------------------------------------------------------
+def _inject_mock_healpy():
+    if "healpy" not in sys.modules:
+        mod = types.ModuleType("healpy")
+        mod.nside2npix = lambda nside: 12 * nside**2
+        mod.read_map = lambda *a, **kw: np.zeros(12)
+        mod.ud_grade = lambda m, nside_out: np.zeros(12 * nside_out**2)
+        sys.modules["healpy"] = mod
+
+
+# ---------------------------------------------------------------------------
+# Mock pymaster
+# ---------------------------------------------------------------------------
+def _inject_mock_pymaster():
+    if "pymaster" not in sys.modules:
+        mod = types.ModuleType("pymaster")
+
+        class _NmtField:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        class _NmtWorkspace:
+            def __init__(self):
+                pass
+
+            def read_from(self, *a):
+                pass
+
+            def write_to(self, *a):
+                pass
+
+            def compute_coupling_matrix(self, *a, **kw):
+                pass
+
+            def decouple_cell(self, cl):
+                return cl
+
+            def get_bandpower_windows(self):
+                return np.zeros((4, 10, 4, 10))
+
+        class _NmtBin:
+            def __init__(self, *args, **kwargs):
+                self.leff = np.array([])
+
+            def get_effective_ells(self):
+                return self.leff
+
+        mod.NmtField = _NmtField
+        mod.NmtWorkspace = _NmtWorkspace
+        mod.NmtBin = _NmtBin
+        mod.compute_coupled_cell = lambda f1, f2: np.zeros((4, 10))
+        sys.modules["pymaster"] = mod
+
+
 # Run injections at import time so they are available before collection
 _inject_mock_bbpipe()
 _inject_mock_fgbuster()
+_inject_mock_sacc()
+_inject_mock_healpy()
+_inject_mock_pymaster()
 
 
 # ---------------------------------------------------------------------------

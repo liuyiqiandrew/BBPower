@@ -110,10 +110,12 @@ def run_polychord(likelihood: Likelihood, config: dict, output_dir: str) -> Any:
     ndim = len(likelihood.params.p0)
     nder = 0
 
-    def pc_likelihood(theta):
+    def pc_likelihood(theta: np.ndarray) -> tuple[float, list[int]]:
+        """Evaluate the log-likelihood for PolyChord."""
         return likelihood.lnlike(theta), [0]
 
-    def pc_prior(hypercube):
+    def pc_prior(hypercube: list[float]) -> list[float]:
+        """Map the unit hypercube to the physical prior."""
         prior = []
         for h, pr in zip(hypercube, likelihood.params.p_free_priors):
             if pr[1] == "Gaussian":
@@ -122,7 +124,14 @@ def run_polychord(likelihood: Likelihood, config: dict, output_dir: str) -> Any:
                 prior.append(UniformPrior(float(pr[2][0]), float(pr[2][2]))(h))
         return prior
 
-    def dumper(live, dead, logweights, logZ, logZerr):
+    def dumper(
+        live: np.ndarray,
+        dead: np.ndarray,
+        logweights: np.ndarray,
+        logZ: float,
+        logZerr: float,
+    ) -> None:
+        """Print the last dead point during PolyChord sampling."""
         print("Last dead point:", dead[-1])
 
     settings = PolyChordSettings(ndim, nder)
@@ -163,7 +172,8 @@ def run_minimizer(likelihood: Likelihood, config: dict, output_dir: str) -> np.n
     """
     from scipy.optimize import minimize
 
-    def chi2(par):
+    def chi2(par: np.ndarray) -> float:
+        """Return negative-two-log-posterior for the minimizer."""
         return -2 * likelihood.lnprob(par)
 
     res = minimize(chi2, likelihood.params.p0, method="Powell")
@@ -208,13 +218,15 @@ def run_fisher(
     import numdifftools as nd
     from scipy.optimize import minimize
 
-    def chi2(par):
+    def chi2(par: np.ndarray) -> float:
+        """Return negative-two-log-posterior for the minimizer."""
         return -2 * likelihood.lnprob(par)
 
     res = minimize(chi2, likelihood.params.p0, method="Powell")
     best_fit = res.x
 
-    def lnprobd(p):
+    def lnprobd(p: np.ndarray) -> float:
+        """Clamped log-posterior for numerical differentiation."""
         val = likelihood.lnprob(p)
         if val == -np.inf:
             val = -1e100
@@ -319,7 +331,8 @@ def run_predicted_spectra(
     if at_min:
         from scipy.optimize import minimize
 
-        def chi2(par):
+        def chi2(par: np.ndarray) -> float:
+            """Return negative-two-log-posterior for the minimizer."""
             return -2 * likelihood.lnprob(par)
 
         res = minimize(chi2, likelihood.params.p0, method="Powell")
