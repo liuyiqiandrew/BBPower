@@ -7,6 +7,7 @@ specific inference or evaluation strategy.  They are registered in
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from contextlib import contextmanager
 import os
 import time
@@ -19,7 +20,22 @@ if TYPE_CHECKING:
 
 
 def _get_emcee_nworkers(nwalkers: int) -> int:
-    """Choose a worker count for emcee from the runtime environment."""
+    """Choose a worker count for emcee from the runtime environment.
+
+    Check ``BBPOWER_EMCEE_WORKERS`` then ``SLURM_CPUS_PER_TASK``, falling
+    back to ``os.cpu_count()``.  The result is capped so that it never
+    exceeds half the walkers (the stretch-move concurrency limit).
+
+    Parameters
+    ----------
+    nwalkers : int
+        Number of emcee walkers (used to compute the useful cap).
+
+    Returns
+    -------
+    int
+        Number of workers to use (always >= 1).
+    """
     useful_limit = max(1, (nwalkers + 1) // 2)
 
     def clip_workers(requested: int) -> int:
@@ -48,7 +64,17 @@ def _get_emcee_nworkers(nwalkers: int) -> int:
 
 
 def _get_emcee_pool_mode() -> str:
-    """Choose the emcee parallel backend from the runtime environment."""
+    """Choose the emcee parallel backend from the runtime environment.
+
+    Read ``BBPOWER_EMCEE_POOL`` and return one of ``"serial"``,
+    ``"thread"``, or ``"process"``.  Default to ``"thread"`` when the
+    variable is absent or invalid.
+
+    Returns
+    -------
+    str
+        One of ``"serial"``, ``"thread"``, ``"process"``.
+    """
     mode = os.environ.get("BBPOWER_EMCEE_POOL", "thread").strip().lower()
     if mode in {"serial", "thread", "process"}:
         return mode
@@ -57,8 +83,27 @@ def _get_emcee_pool_mode() -> str:
 
 
 @contextmanager
-def _emcee_backend_lock(filename: str):
-    """Protect an emcee backend from concurrent writers."""
+def _emcee_backend_lock(filename: str) -> Generator[None, None, None]:
+    """Protect an emcee HDF5 backend from concurrent writers.
+
+    Acquire an exclusive advisory lock on ``<filename>.lock``.  If
+    another process already holds the lock, raise ``RuntimeError``
+    immediately instead of blocking.
+
+    Parameters
+    ----------
+    filename : str
+        Path to the HDF5 backend file (the lock file is ``<filename>.lock``).
+
+    Yields
+    ------
+    None
+
+    Raises
+    ------
+    RuntimeError
+        If another process already holds the lock.
+    """
     import fcntl
 
     lock_path = f"{filename}.lock"

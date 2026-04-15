@@ -10,7 +10,13 @@ import numpy as np
 import pytest
 
 import bbpower.samplers as samplers
-from bbpower.samplers import SAMPLERS, run_singlepoint, run_timing
+from bbpower.samplers import (
+    SAMPLERS,
+    run_fisher,
+    run_minimizer,
+    run_singlepoint,
+    run_timing,
+)
 
 
 class TestSamplersDict:
@@ -237,3 +243,230 @@ class TestRunEmcee:
         )
 
         assert out["chain"].shape == (6, 3, 2)
+
+
+class TestGetEmceeNworkers:
+    """Edge-case tests for _get_emcee_nworkers."""
+
+    def test_invalid_env_falls_back_to_cpu_count(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Non-integer env value is ignored and CPU count is used."""
+        monkeypatch.setenv("BBPOWER_EMCEE_WORKERS", "not_a_number")
+        monkeypatch.delenv("SLURM_CPUS_PER_TASK", raising=False)
+        result = samplers._get_emcee_nworkers(100)
+        assert result >= 1
+
+    def test_no_env_falls_back_to_cpu_count(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With no env vars set, fall back to os.cpu_count()."""
+        monkeypatch.delenv("BBPOWER_EMCEE_WORKERS", raising=False)
+        monkeypatch.delenv("SLURM_CPUS_PER_TASK", raising=False)
+        result = samplers._get_emcee_nworkers(100)
+        assert result >= 1
+
+    def test_caps_at_half_walkers(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Worker count never exceeds (nwalkers + 1) // 2."""
+        monkeypatch.setenv("BBPOWER_EMCEE_WORKERS", "100")
+        # With 4 walkers, cap is (4+1)//2 = 2
+        assert samplers._get_emcee_nworkers(4) == 2
+
+    def test_minimum_one_worker(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Worker count is at least 1 even with 1 walker."""
+        monkeypatch.setenv("BBPOWER_EMCEE_WORKERS", "1")
+        assert samplers._get_emcee_nworkers(1) == 1
+
+
+class TestGetEmceePoolMode:
+    """Edge-case tests for _get_emcee_pool_mode."""
+
+    def test_invalid_mode_falls_back_to_thread(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Invalid pool mode string defaults to 'thread'."""
+        monkeypatch.setenv("BBPOWER_EMCEE_POOL", "mpi")
+        assert samplers._get_emcee_pool_mode() == "thread"
+
+    def test_serial_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """'serial' is a valid pool mode."""
+        monkeypatch.setenv("BBPOWER_EMCEE_POOL", "serial")
+        assert samplers._get_emcee_pool_mode() == "serial"
+
+    def test_whitespace_stripped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Leading/trailing whitespace in the env value is stripped."""
+        monkeypatch.setenv("BBPOWER_EMCEE_POOL", "  process  ")
+        assert samplers._get_emcee_pool_mode() == "process"
+
+
+class TestRunMinimizer:
+    """Test the maximum-likelihood minimizer."""
+
+    def test_finds_minimum_of_quadratic(self, tmp_path: str) -> None:
+        """Minimize a simple quadratic likelihood and verify output."""
+
+        class MockParams:
+            p0 = np.array([5.0, -3.0])
+            p_free_names = ["a", "b"]
+
+            def lnprior(self, par: np.ndarray) -> float:
+                return 0.0
+
+            def build_params(self, par: np.ndarray) -> dict:
+                return {"a": par[0], "b": par[1]}
+
+        class QuadraticLikelihood:
+            params = MockParams()
+            invcov = np.eye(2)
+
+            def lnprob(self, par: np.ndarray) -> float:
+                # Maximum at (0, 0)
+                return -0.5 * np.dot(par, par)
+
+        best_fit = run_minimizer(QuadraticLikelihood(), {}, str(tmp_path))
+        np.testing.assert_allclose(best_fit, [0.0, 0.0], atol=1e-4)
+
+        out = np.load(tmp_path / "chi2.npz")
+        assert "params" in out
+        assert "names" in out
+        assert "chi2" in out
+        assert "ndof" in out
+        assert out["chi2"] == pytest.approx(0.0, abs=1e-4)
+
+    def test_output_names_match(self, tmp_path: str) -> None:
+        """Saved parameter names match the free parameter list."""
+
+        class MockParams:
+            p0 = np.array([1.0])
+            p_free_names = ["r_tensor"]
+
+            def lnprior(self, par: np.ndarray) -> float:
+                return 0.0
+
+            def build_params(self, par: np.ndarray) -> dict:
+                return {"r_tensor": par[0]}
+
+        class SimpleLikelihood:
+            params = MockParams()
+            invcov = np.eye(1)
+
+            def lnprob(self, par: np.ndarray) -> float:
+                return -0.5 * par[0] ** 2
+
+        run_minimizer(SimpleLikelihood(), {}, str(tmp_path))
+        out = np.load(tmp_path / "chi2.npz")
+        assert out["names"].tolist() == ["r_tensor"]
+
+
+class TestRunFisher:
+    """Test the Fisher matrix computation."""
+
+    def test_fisher_of_gaussian(self, tmp_path: str) -> None:
+        """Fisher matrix of a Gaussian likelihood matches the precision matrix."""
+
+        sigma = np.array([2.0, 0.5])
+        precision = np.diag(1.0 / sigma**2)
+
+        class MockParams:
+            p0 = np.array([0.0, 0.0])
+            p_free_names = ["x", "y"]
+
+            def lnprior(self, par: np.ndarray) -> float:
+                return 0.0
+
+            def build_params(self, par: np.ndarray) -> dict:
+                return {"x": par[0], "y": par[1]}
+
+        class GaussianLikelihood:
+            params = MockParams()
+
+            def lnprob(self, par: np.ndarray) -> float:
+                return -0.5 * par @ precision @ par
+
+        best_fit, fisher = run_fisher(GaussianLikelihood(), {}, str(tmp_path))
+        np.testing.assert_allclose(best_fit, [0.0, 0.0], atol=1e-4)
+        np.testing.assert_allclose(fisher, precision, rtol=1e-3)
+
+        out = np.load(tmp_path / "fisher.npz")
+        assert "params" in out
+        assert "fisher" in out
+        assert "names" in out
+
+    def test_fisher_output_shape(self, tmp_path: str) -> None:
+        """Fisher matrix has the right shape for 3 parameters."""
+
+        class MockParams:
+            p0 = np.array([0.0, 0.0, 0.0])
+            p_free_names = ["a", "b", "c"]
+
+            def lnprior(self, par: np.ndarray) -> float:
+                return 0.0
+
+            def build_params(self, par: np.ndarray) -> dict:
+                return {"a": par[0], "b": par[1], "c": par[2]}
+
+        class SimpleLikelihood:
+            params = MockParams()
+
+            def lnprob(self, par: np.ndarray) -> float:
+                return -0.5 * np.dot(par, par)
+
+        _, fisher = run_fisher(SimpleLikelihood(), {}, str(tmp_path))
+        assert fisher.shape == (3, 3)
+
+
+class TestRunTimingEdgeCases:
+    """Additional edge cases for run_timing."""
+
+    def test_timing_output_keys(self, tmp_path: str) -> None:
+        """Saved npz contains 'timing' and 'names' keys."""
+
+        class MockParams:
+            p0 = np.array([1.0, 2.0])
+            p_free_names = ["alpha", "beta"]
+
+            def lnprior(self, par: np.ndarray) -> float:
+                return 0.0
+
+            def build_params(self, par: np.ndarray) -> dict:
+                return {"alpha": par[0], "beta": par[1]}
+
+        class MockLikelihood:
+            params = MockParams()
+
+            def lnprob(self, par: np.ndarray) -> float:
+                return -1.0
+
+        total, per_eval = run_timing(MockLikelihood(), {}, str(tmp_path), n_eval=10)
+        assert per_eval == pytest.approx(total / 10)
+        out = np.load(tmp_path / "timing.npz")
+        assert out["names"].tolist() == ["alpha", "beta"]
+
+
+class TestRunSinglepointEdgeCases:
+    """Additional edge cases for run_singlepoint."""
+
+    def test_large_chi2(self, tmp_path: str) -> None:
+        """Very negative lnprob yields large chi2."""
+
+        class MockParams:
+            p0 = np.array([0.0])
+            p_free_names = ["r"]
+
+            def lnprior(self, par: np.ndarray) -> float:
+                return 0.0
+
+            def build_params(self, par: np.ndarray) -> dict:
+                return {"r": par[0]}
+
+        class MockLikelihood:
+            params = MockParams()
+            invcov = np.eye(5)
+
+            def lnprob(self, par: np.ndarray) -> float:
+                return -500.0
+
+        chi2 = run_singlepoint(MockLikelihood(), {}, str(tmp_path))
+        assert chi2 == pytest.approx(1000.0)
+        out = np.load(tmp_path / "single_point.npz")
+        assert out["ndof"] == 5
