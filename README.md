@@ -181,6 +181,15 @@ param_name: ['internal_name', 'prior_type', [prior_args]]
 | Single-point chi2 | `single_point` | -- | `single_point.npz` |
 | Timing benchmark | `timing` | -- | `timing.npz` |
 
+`emcee` runtime notes:
+
+- `BBCompSep` uses a thread pool by default for `sampler: emcee`. This avoids pickling failures that can appear with process pools when the likelihood contains `fgbuster` bandpass wrappers.
+- `BBPOWER_EMCEE_WORKERS` chooses the requested worker count, but BBPower caps the effective value to about half the walkers, `ceil(nwalkers / 2)`, because emcee's default stretch move updates one red-blue split at a time.
+- `BBPOWER_EMCEE_POOL=thread` is the recommended default. `serial` is useful for debugging, and `process` should only be used when the likelihood is known to be fully picklable.
+- Native math-library thread settings such as `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, and `MKL_NUM_THREADS` are separate from the emcee worker count.
+- Only one emcee process may write a given `output_dir/emcee.npz.h5` at a time. Resubmission is fine after the earlier process exits, but running two jobs against the same output directory concurrently can corrupt the backend.
+- See [docs/threading.md](docs/threading.md) for the full explanation of parameter precedence, bash defaults, the worker cap, and cluster examples such as `32` CPUs with `40` walkers.
+
 ## Tests
 
 Tests are shell scripts in `test/`. The fastest is:
@@ -207,6 +216,7 @@ bash test/run_predicted_spectra_test.sh
 ## Documentation
 
 - [docs/setup.md](docs/setup.md) -- Installation by workflow, stage entry points, and troubleshooting
+- [docs/threading.md](docs/threading.md) -- Detailed guide to `BBCompSep` emcee workers, BLAS/OpenMP threads, and cluster setup
 - [docs/architecture.md](docs/architecture.md) -- Module interactions, data flow, and class relationships
 - [docs/configuration.md](docs/configuration.md) -- Complete configuration reference
 - [docs/examples.md](docs/examples.md) -- Step-by-step usage examples and test descriptions

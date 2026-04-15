@@ -95,7 +95,44 @@ Important detail:
 | `BBCompSep` | sampler-specific files in `output_dir` such as `emcee.npz`, `chi2.npz`, `single_point.npz`, `fisher.npz`, `cells_model.npz`, plus `config_copy.yml` |
 | `BBPlotter` | `plots.dir/`, `plots_page.html`, and optionally `triangle.png` |
 
-## 7. Recommended smoke tests
+## 7. `emcee` parallelism for `BBCompSep`
+
+`BBCompSep` can parallelize `sampler: emcee`, but there are several interacting
+runtime parameters and defaults. The details matter on clusters, especially if
+you are comparing `nwalkers`, Slurm CPU requests, and BLAS/OpenMP thread counts.
+
+Read [threading.md](threading.md) for the full guide. That page explains:
+
+- what `BBPOWER_EMCEE_WORKERS`, `BBPOWER_EMCEE_POOL`, `OMP_NUM_THREADS`,
+  `OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, and `SLURM_CPUS_PER_TASK` each do
+- how bash defaults like `${VAR:-1}` work
+- why emcee worker parallelism is capped to `ceil(nwalkers / 2)`
+- why `thread` is the default emcee pool
+- why `emcee.npz.h5` is single-writer only
+- concrete examples such as `32` CPUs with `40` walkers
+
+Recommended cluster settings for the standard `BBCompSep` likelihood:
+
+```bash
+export BBPOWER_EMCEE_POOL=thread
+export BBPOWER_EMCEE_WORKERS="${SLURM_CPUS_PER_TASK:-1}"
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
+```
+
+Why keep BLAS threads at `1` here:
+
+- emcee parallelism already spreads likelihood calls across workers
+- enabling many BLAS threads inside every worker can oversubscribe the node and slow the run down
+
+If you have more CPUs than the useful emcee worker count, there are only two realistic ways to use them:
+
+- Increase `nwalkers`, if that is scientifically and operationally acceptable for your run.
+- Try a hybrid setup with fewer emcee workers and more BLAS threads per worker, but benchmark it on your likelihood first. That is not the default because the best setting depends strongly on the model and machine.
+
+## 8. Recommended smoke tests
 
 These are the fastest ways to confirm a given install actually runs the stages you care about.
 
@@ -116,7 +153,7 @@ If you installed the full map-level stack:
 bash test/run_power_specter_test.sh
 ```
 
-## 8. Common setup failures
+## 9. Common setup failures
 
 ### `ModuleNotFoundError: fgbuster`
 
@@ -154,9 +191,10 @@ pip install -e ".[power-spectra]"
 
 Make sure `--output_dir` already exists. BBPower writes into that directory but does not create every intermediate parent path for you.
 
-## 9. Where to go next
+## 10. Where to go next
 
 - [README.md](../README.md) for the main project overview
+- [threading.md](threading.md) for the full `BBCompSep` emcee threading and environment guide
 - [architecture.md](architecture.md) for stage internals and data flow
 - [configuration.md](configuration.md) for all YAML options
 - [examples.md](examples.md) for concrete workflows and commands

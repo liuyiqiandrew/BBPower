@@ -7,6 +7,7 @@ specific inference or evaluation strategy.  They are registered in
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import os
 import time
 from typing import TYPE_CHECKING, Any
@@ -15,6 +16,65 @@ import numpy as np
 
 if TYPE_CHECKING:
     from .likelihood import Likelihood
+
+
+def _get_emcee_nworkers(nwalkers: int) -> int:
+    """Choose a worker count for emcee from the runtime environment."""
+    useful_limit = max(1, (nwalkers + 1) // 2)
+
+    def clip_workers(requested: int) -> int:
+        if requested > useful_limit:
+            print(
+                "Capping emcee workers to "
+                f"{useful_limit}; the default stretch move only proposes about "
+                "half of the walkers at a time."
+            )
+        return max(1, min(requested, useful_limit))
+
+    env_value = os.environ.get("BBPOWER_EMCEE_WORKERS")
+    if env_value is None:
+        env_value = os.environ.get("SLURM_CPUS_PER_TASK")
+
+    if env_value is not None:
+        try:
+            requested = int(env_value)
+        except ValueError:
+            print(f"Ignoring invalid worker count {env_value!r}")
+        else:
+            return clip_workers(requested)
+
+    detected = os.cpu_count() or 1
+    return clip_workers(detected)
+
+
+def _get_emcee_pool_mode() -> str:
+    """Choose the emcee parallel backend from the runtime environment."""
+    mode = os.environ.get("BBPOWER_EMCEE_POOL", "thread").strip().lower()
+    if mode in {"serial", "thread", "process"}:
+        return mode
+    print(f"Ignoring invalid pool mode {mode!r}")
+    return "thread"
+
+
+@contextmanager
+def _emcee_backend_lock(filename: str):
+    """Protect an emcee backend from concurrent writers."""
+    import fcntl
+
+    lock_path = f"{filename}.lock"
+    with open(lock_path, "a+", encoding="ascii") as lock_file:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError(
+                "Another BBCompSep emcee run is already using "
+                f"{filename}. Wait for that run to finish or use a different "
+                "output directory."
+            ) from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def run_emcee(likelihood: Likelihood, config: dict, output_dir: str) -> dict:
@@ -35,40 +95,73 @@ def run_emcee(likelihood: Likelihood, config: dict, output_dir: str) -> dict:
         Keys: ``chain``, ``names``, ``time``.
     """
     import emcee
-    from multiprocessing import Pool
+    from multiprocessing import Pool as ProcessPool
+    from multiprocessing.pool import ThreadPool
 
     fname_temp = os.path.join(output_dir, "emcee.npz.h5")
-    backend = emcee.backends.HDFBackend(fname_temp)
+    with _emcee_backend_lock(fname_temp):
+        backend = emcee.backends.HDFBackend(fname_temp)
 
-    nwalkers = config["nwalkers"]
-    n_iters = config["n_iters"]
-    ndim = len(likelihood.params.p0)
-    found_file = os.path.isfile(fname_temp)
+        nwalkers = config["nwalkers"]
+        n_iters = config["n_iters"]
+        ndim = len(likelihood.params.p0)
+        found_file = os.path.isfile(fname_temp)
 
-    try:
-        nchain = len(backend.get_chain())
-    except AttributeError:
-        found_file = False
+        try:
+            nchain = len(backend.get_chain())
+        except AttributeError:
+            found_file = False
+        except (OSError, IOError, KeyError, ValueError) as exc:
+            raise RuntimeError(
+                f"Existing emcee backend {fname_temp} is unreadable. "
+                "This usually means a previous run was interrupted while "
+                "writing, or another process touched the same backend. Move "
+                "the file aside or use a fresh output directory."
+            ) from exc
 
-    if not found_file:
-        backend.reset(nwalkers, ndim)
-        pos = [
-            likelihood.params.p0 + 1.0e-3 * np.random.randn(ndim)
-            for _ in range(nwalkers)
-        ]
-        nsteps_use = n_iters
-    else:
-        print("Restarting from previous run")
-        pos = None
-        nsteps_use = max(n_iters - nchain, 0)
+        if not found_file:
+            backend.reset(nwalkers, ndim)
+            pos = [
+                likelihood.params.p0 + 1.0e-3 * np.random.randn(ndim)
+                for _ in range(nwalkers)
+            ]
+            nsteps_use = n_iters
+        else:
+            print("Restarting from previous run")
+            pos = None
+            nsteps_use = max(n_iters - nchain, 0)
 
-    with Pool() as pool:
+        nworkers = _get_emcee_nworkers(nwalkers)
+        pool_mode = _get_emcee_pool_mode()
+        print(f"Using {nworkers} emcee worker(s) with {pool_mode} pool")
+
         start = time.time()
-        sampler = emcee.EnsembleSampler(
-            nwalkers, ndim, likelihood.lnprob, backend=backend
-        )
-        if nsteps_use > 0:
-            sampler.run_mcmc(pos, nsteps_use, store=True, progress=False)
+        try:
+            if nworkers == 1 or pool_mode == "serial":
+                sampler = emcee.EnsembleSampler(
+                    nwalkers, ndim, likelihood.lnprob, backend=backend
+                )
+                if nsteps_use > 0:
+                    sampler.run_mcmc(pos, nsteps_use, store=True, progress=False)
+            else:
+                pool_factory = ThreadPool if pool_mode == "thread" else ProcessPool
+                with pool_factory(processes=nworkers) as pool:
+                    sampler = emcee.EnsembleSampler(
+                        nwalkers,
+                        ndim,
+                        likelihood.lnprob,
+                        pool=pool,
+                        backend=backend,
+                    )
+                    if nsteps_use > 0:
+                        sampler.run_mcmc(pos, nsteps_use, store=True, progress=False)
+        except OSError as exc:
+            raise RuntimeError(
+                f"emcee backend {fname_temp} became unreadable during sampling. "
+                "This usually happens when two runs write the same output "
+                "directory/backend concurrently, or when a previous write left "
+                "the HDF5 file corrupted."
+            ) from exc
         elapsed = time.time() - start
 
     out_path = os.path.join(output_dir, "emcee.npz")

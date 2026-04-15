@@ -155,6 +155,14 @@ Notes:
 - `polychord` requires a separate PolyChord installation; it is not installed by the standard package extras.
 - `fisher` needs `numdifftools`.
 - Moment-expanded foreground models (`fg_model.use_moments: true`) need `pyshtools`.
+- `sampler: emcee` uses environment variables for runtime parallelism rather than YAML keys:
+  - `BBPOWER_EMCEE_WORKERS` sets the worker count.
+  - `BBPOWER_EMCEE_POOL` selects `thread`, `serial`, or `process`.
+- The default pool is `thread`, which is the recommended mode for standard `BBCompSep` likelihoods because process pools can fail on non-picklable `fgbuster` helper objects.
+- The useful emcee worker count is capped to `ceil(nwalkers / 2)` because the default stretch move updates one half of the walker ensemble at a time.
+- `emcee.npz.h5` is a single-writer backend. Do not run two `BBCompSep` `emcee` jobs against the same output directory at once.
+- If you want more CPU use than that cap allows, the next knob is usually a larger `nwalkers`, not a larger worker pool. Hybrid setups with fewer emcee workers and BLAS threads greater than `1` are possible, but they should be benchmarked explicitly to avoid oversubscription.
+- See [threading.md](threading.md) for the full explanation of environment-variable precedence, bash defaults, worker caps, BLAS/OpenMP settings, and cluster examples.
 
 #### CMB model
 
