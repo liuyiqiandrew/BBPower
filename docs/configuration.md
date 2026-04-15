@@ -150,6 +150,12 @@ Available samplers:
 | `timing` | Benchmark likelihood speed | `timing.npz` |
 | `predicted_spectra` | Evaluate model at MAP/fiducial | `cells_model.npz` or `.fits` |
 
+Notes:
+
+- `polychord` requires a separate PolyChord installation; it is not installed by the standard package extras.
+- `fisher` needs `numdifftools`.
+- Moment-expanded foreground models (`fg_model.use_moments: true`) need `pyshtools`.
+
 #### CMB model
 
 ```yaml

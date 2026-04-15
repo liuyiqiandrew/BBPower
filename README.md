@@ -6,15 +6,39 @@ BBPower performs a maps-to-parameters analysis: it computes cross-frequency band
 
 ## Installation
 
-```bash
-# Core (component separation and plotting only)
-pip install -e .
+Create and activate an environment first (`venv`, `conda`, etc.), then install the extra dependencies that match the stages you want to run.
 
-# Full (includes map-level stages: healpy, pymaster, fgbuster, getdist)
-pip install -e ".[all]"
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+```
+
+### Choose the right install
+
+| Workflow | Stages covered | Install command |
+|---|---|---|
+| Shared code + lightweight utilities | Package import, config parsing, `BBPowerSummarizer` | `pip install -e .` |
+| Spectra-to-parameters | `BBCompSep` | `pip install -e ".[compsep]"` |
+| Spectra-to-parameters + plots | `BBCompSep`, `BBPlotter` | `pip install -e ".[compsep,plotting]"` |
+| Moment models or Fisher runs | `BBCompSep` with `use_moments: true` or `sampler: fisher` | `pip install -e ".[compsep,plotting,sampling]"` |
+| Full maps-to-parameters pipeline | All four stages | `pip install -e ".[all]"` |
+
+Notes:
+- `BBCompSep` always needs `fgbuster`, so `pip install -e .` by itself is **not** enough for component separation.
+- Moment-expanded foreground models need `pyshtools` because `BBCompSep` uses Wigner 3-j symbols for the moment terms.
+- `BBPlotter` can generate spectra plots without MCMC contours, but triangle plots require `getdist`.
+- `BBPowerSpecter` and the full maps-to-parameters workflow need `healpy` and `pymaster`, which are only installed by `.[power-spectra]` / `.[all]`.
+- `sampler: polychord` requires a separate PolyChord installation; it is not installed by the package extras.
+
+```bash
+# Quick checks
+python -m bbpower --help
+python -c "import bbpower; print(bbpower.__file__)"
 ```
 
 Requires Python >= 3.10. See [pyproject.toml](pyproject.toml) for the full dependency list.
+See [docs/setup.md](docs/setup.md) for a setup checklist, stage-by-stage dependency guide, and troubleshooting notes.
 
 ## Quick Start
 
@@ -60,6 +84,17 @@ BBPower has four stages that run in sequence. Each reads typed inputs and produc
 | **BBPlotter** | `plotter.py` | Generate diagnostic plots and an HTML summary page |
 
 You can run the full pipeline (maps to parameters) or enter at any stage with pre-computed inputs. See [docs/architecture.md](docs/architecture.md) for the data flow and module interactions.
+
+### Common entry points
+
+| If you already have... | Start at | Required main files |
+|---|---|---|
+| HEALPix Q/U maps, mask, beams, bandpasses | `BBPowerSpecter` | `splits_list`, `masks_apodized`, `bandpasses_list`, `beams_list`, `sims_list` |
+| Split-level SACC spectra from maps/sims | `BBPowerSummarizer` | `cells_all_splits`, `cells_all_sims`, `splits_list`, `bandpasses_list` |
+| Coadded spectra + covariance | `BBCompSep` | `cells_coadded`, `cells_noise`, `cells_coadded_cov`, stage config |
+| Existing BBPower outputs | `BBPlotter` | `cells_coadded*`, `cells_fiducial`, `param_chains`, plot paths |
+
+For most users, the lowest-friction path is to start at `BBCompSep` with pre-computed SACC spectra instead of running the map-level stages.
 
 ## Configuration
 
@@ -108,6 +143,19 @@ BBCompSep:
 
 See [docs/configuration.md](docs/configuration.md) for the complete reference.
 
+## What Each Stage Writes
+
+These are the outputs you will typically inspect when wiring the pipeline together:
+
+| Stage | Main outputs |
+|---|---|
+| `BBPowerSpecter` | `cells_all_splits.fits`, `cells_all_sims.txt`, `mcm*` |
+| `BBPowerSummarizer` | `cells_coadded.fits`, `cells_coadded_total.fits`, `cells_noise.fits`, `cells_null.fits` |
+| `BBCompSep` | `emcee.npz`, `chi2.npz`, `single_point.npz`, `fisher.npz`, `cells_model.npz`, `config_copy.yml` |
+| `BBPlotter` | `plots.dir/`, `plots_page.html`, and optionally `triangle.png` |
+
+`BBCompSep` always expects `--output_dir` and `--config_copy` to point to an existing writable directory. The common pattern is to create that directory before invoking the stage.
+
 ## Parameter Format
 
 Every model parameter is defined as a three-element list:
@@ -143,8 +191,22 @@ bash test/run_sampling_test.sh
 
 See [docs/examples.md](docs/examples.md) for descriptions of all test scripts and example workflows.
 
+For setup validation, the most useful smoke tests are:
+
+```bash
+# BBCompSep only
+bash test/run_compsep_test.sh
+
+# BBCompSep + BBPlotter
+bash test/run_sampling_test.sh
+
+# Predicted spectra output
+bash test/run_predicted_spectra_test.sh
+```
+
 ## Documentation
 
+- [docs/setup.md](docs/setup.md) -- Installation by workflow, stage entry points, and troubleshooting
 - [docs/architecture.md](docs/architecture.md) -- Module interactions, data flow, and class relationships
 - [docs/configuration.md](docs/configuration.md) -- Complete configuration reference
 - [docs/examples.md](docs/examples.md) -- Step-by-step usage examples and test descriptions
