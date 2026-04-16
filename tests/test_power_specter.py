@@ -1,8 +1,11 @@
 """Tests for pure helper methods in bbpower.power_specter."""
+
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
+import bbpower.power_specter as power_specter
 from bbpower.power_specter import BBPowerSpecter
 
 
@@ -10,7 +13,10 @@ def _make_specter(**attrs: object) -> BBPowerSpecter:
     """Create a BBPowerSpecter without calling __init__."""
     obj = object.__new__(BBPowerSpecter)
     for k, v in attrs.items():
-        setattr(obj, k, v)
+        if k == "config":
+            setattr(obj, "_configs", v)
+        else:
+            setattr(obj, k, v)
     return obj
 
 
@@ -82,3 +88,162 @@ class TestGetCellIterator:
         assert (b1, b2, s1, s2) == (0, 0, 0, 0)
         assert l1 == "band1_split1"
         assert l2 == "band1_split1"
+
+
+class TestGetBandpowers:
+    """Test NaMaster bandpower construction compatibility helpers."""
+
+    def test_custom_bins_use_namaster2_keyword_api(self, monkeypatch, tmp_path) -> None:
+        """NaMaster >=2 custom bins use f_ell instead of the removed is_Dell."""
+        calls = []
+
+        class FakeNmtBin:
+            def __init__(self, *, bpws, ells, lmax=None, weights=None, f_ell=None):
+                calls.append(
+                    {
+                        "bpws": bpws,
+                        "ells": ells,
+                        "weights": weights,
+                        "f_ell": f_ell,
+                        "lmax": lmax,
+                    }
+                )
+
+            @classmethod
+            def from_nside_linear(cls, nside, nlb, is_Dell=False, f_ell=None):
+                raise AssertionError("custom bin test should not use linear bins")
+
+        monkeypatch.setattr(power_specter.nmt, "NmtBin", FakeNmtBin)
+        edges = tmp_path / "edges.txt"
+        np.savetxt(edges, np.array([2, 4, 6]))
+        ps = _make_specter(
+            config={"bpw_edges": str(edges), "compute_dell": True},
+            nside=8,
+            larr_all=np.arange(24),
+        )
+
+        ps.get_bandpowers()
+
+        assert len(calls) == 1
+        np.testing.assert_array_equal(calls[0]["ells"], ps.larr_all)
+        np.testing.assert_allclose(
+            calls[0]["f_ell"],
+            ps.larr_all * (ps.larr_all + 1) / (2 * np.pi),
+        )
+
+    def test_custom_bins_keep_namaster1_is_dell(self, monkeypatch, tmp_path) -> None:
+        """NaMaster 1 custom bins keep the historical positional constructor."""
+        calls = []
+
+        class FakeNmtBin:
+            def __init__(
+                self, nside, bpws=None, ells=None, weights=None, is_Dell=False
+            ):
+                calls.append(
+                    {
+                        "nside": nside,
+                        "bpws": bpws,
+                        "ells": ells,
+                        "weights": weights,
+                        "is_Dell": is_Dell,
+                    }
+                )
+
+        monkeypatch.setattr(power_specter.nmt, "NmtBin", FakeNmtBin)
+        edges = tmp_path / "edges.txt"
+        np.savetxt(edges, np.array([2, 4, 6]))
+        ps = _make_specter(
+            config={"bpw_edges": str(edges), "compute_dell": True},
+            nside=8,
+            larr_all=np.arange(24),
+        )
+
+        ps.get_bandpowers()
+
+        assert len(calls) == 1
+        assert calls[0]["nside"] == 8
+        assert calls[0]["is_Dell"] is True
+        np.testing.assert_array_equal(calls[0]["ells"], ps.larr_all)
+
+    def test_linear_bins_use_namaster2_constructor(self, monkeypatch) -> None:
+        """NaMaster >=2 integer-width bins use from_nside_linear."""
+        calls = []
+
+        class FakeNmtBin:
+            def __init__(self, *, bpws, ells, lmax=None, weights=None, f_ell=None):
+                raise AssertionError("linear bin test should use from_nside_linear")
+
+            @classmethod
+            def from_nside_linear(cls, nside, nlb, is_Dell=False, f_ell=None):
+                calls.append(
+                    {
+                        "nside": nside,
+                        "nlb": nlb,
+                        "is_Dell": is_Dell,
+                        "f_ell": f_ell,
+                    }
+                )
+                return "bins"
+
+        monkeypatch.setattr(power_specter.nmt, "NmtBin", FakeNmtBin)
+        ps = _make_specter(config={"bpw_edges": 20}, nside=8)
+
+        ps.get_bandpowers()
+
+        assert ps.bins == "bins"
+        assert calls == [{"nside": 8, "nlb": 20, "is_Dell": False, "f_ell": None}]
+
+
+class TestComputeCouplingMatrix:
+    """Test NaMaster workspace API compatibility."""
+
+    def test_passes_n_iter_when_supported(self) -> None:
+        """NaMaster 1-style workspaces receive n_iter on the workspace call."""
+        calls = []
+
+        class Workspace:
+            def compute_coupling_matrix(self, field_1, field_2, bins, n_iter=None):
+                calls.append(
+                    {
+                        "field_1": field_1,
+                        "field_2": field_2,
+                        "bins": bins,
+                        "n_iter": n_iter,
+                    }
+                )
+
+        BBPowerSpecter._compute_coupling_matrix(
+            Workspace(),
+            "f1",
+            "f2",
+            "bins",
+            n_iter=3,
+        )
+
+        assert calls == [
+            {"field_1": "f1", "field_2": "f2", "bins": "bins", "n_iter": 3}
+        ]
+
+    def test_omits_n_iter_when_not_supported(self) -> None:
+        """NaMaster 2-style workspaces do not receive the removed n_iter kwarg."""
+        calls = []
+
+        class Workspace:
+            def compute_coupling_matrix(self, field_1, field_2, bins):
+                calls.append(
+                    {
+                        "field_1": field_1,
+                        "field_2": field_2,
+                        "bins": bins,
+                    }
+                )
+
+        BBPowerSpecter._compute_coupling_matrix(
+            Workspace(),
+            "f1",
+            "f2",
+            "bins",
+            n_iter=3,
+        )
+
+        assert calls == [{"field_1": "f1", "field_2": "f2", "bins": "bins"}]

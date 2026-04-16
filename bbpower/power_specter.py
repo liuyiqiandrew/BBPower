@@ -9,6 +9,7 @@ import sacc
 import numpy as np
 import healpy as hp
 import pymaster as nmt
+import inspect
 import os
 
 
@@ -182,6 +183,135 @@ class BBPowerSpecter(PipelineStage):
             m = hp.read_map(self.get_input("masks_apodized"))
             self.masks.append(hp.ud_grade(m, nside_out=self.nside))
 
+    @staticmethod
+    def _nmt_bin_uses_keyword_api() -> bool:
+        """Check whether ``NmtBin`` uses the NaMaster 2 keyword-only API.
+
+        Returns
+        -------
+        bool
+            True when the installed NaMaster exposes the 2.x constructor
+            signature ``NmtBin(*, bpws, ells, ..., f_ell=...)``. False for
+            the older positional constructor used by NaMaster 1.x.
+        """
+        try:
+            params = inspect.signature(nmt.NmtBin).parameters
+        except (TypeError, ValueError):
+            return False
+        return "f_ell" in params and "is_Dell" not in params and "nside" not in params
+
+    @staticmethod
+    def _dell_prefactor(ells: np.ndarray) -> np.ndarray:
+        """Return the multiplicative factor that converts ``C_ell`` to ``D_ell``.
+
+        Parameters
+        ----------
+        ells : numpy.ndarray
+            Multipoles at which the prefactor should be evaluated.
+
+        Returns
+        -------
+        numpy.ndarray
+            The factor ``ell * (ell + 1) / (2 * pi)``.
+        """
+        return ells * (ells + 1) / (2 * np.pi)
+
+    def _make_custom_nmt_bin(
+        self,
+        bpws: np.ndarray,
+        weights: np.ndarray,
+        is_dell: bool,
+    ) -> nmt.NmtBin:
+        """Create a custom NaMaster bin object across NaMaster 1.x and 2.x.
+
+        Parameters
+        ----------
+        bpws : numpy.ndarray
+            Bandpower index assigned to each multipole. Negative values are
+            ignored by NaMaster.
+        weights : numpy.ndarray
+            Per-multipole weights for the bandpower averages.
+        is_dell : bool
+            If True, make decoupled outputs use ``D_ell`` units instead of
+            ``C_ell`` units.
+
+        Returns
+        -------
+        pymaster.NmtBin
+            Binning scheme compatible with the installed NaMaster version.
+        """
+        if self._nmt_bin_uses_keyword_api():
+            # NaMaster 2 removed the old is_Dell keyword from the low-level
+            # constructor. Passing f_ell preserves the historical behavior.
+            f_ell = self._dell_prefactor(self.larr_all) if is_dell else None
+            return nmt.NmtBin(
+                bpws=bpws,
+                ells=self.larr_all,
+                weights=weights,
+                f_ell=f_ell,
+            )
+        return nmt.NmtBin(
+            self.nside,
+            bpws=bpws,
+            ells=self.larr_all,
+            weights=weights,
+            is_Dell=is_dell,
+        )
+
+    def _make_linear_nmt_bin(self, nlb: int) -> nmt.NmtBin:
+        """Create a linear NaMaster bin object across NaMaster 1.x and 2.x.
+
+        Parameters
+        ----------
+        nlb : int
+            Constant bandpower width in multipoles.
+
+        Returns
+        -------
+        pymaster.NmtBin
+            Linear binning scheme compatible with the installed NaMaster
+            version.
+        """
+        if self._nmt_bin_uses_keyword_api():
+            return nmt.NmtBin.from_nside_linear(self.nside, nlb)
+        return nmt.NmtBin(self.nside, nlb=nlb)
+
+    @staticmethod
+    def _compute_coupling_matrix(
+        workspace: nmt.NmtWorkspace,
+        field_1: nmt.NmtField,
+        field_2: nmt.NmtField,
+        bins: nmt.NmtBin,
+        n_iter: int,
+    ) -> None:
+        """Compute a coupling matrix across NaMaster 1.x and 2.x.
+
+        Parameters
+        ----------
+        workspace : pymaster.NmtWorkspace
+            Workspace object to populate.
+        field_1, field_2 : pymaster.NmtField
+            Fields whose mode-coupling matrix should be computed.
+        bins : pymaster.NmtBin
+            Bandpower binning scheme.
+        n_iter : int
+            Spherical harmonic iteration count. NaMaster 1.x accepted this
+            on ``compute_coupling_matrix``; NaMaster 2.x takes it on
+            ``NmtField`` instead, so it must not be passed twice.
+        """
+        params = inspect.signature(workspace.compute_coupling_matrix).parameters
+        if "n_iter" in params:
+            # NaMaster 1 accepted n_iter here; keep passing it for old installs.
+            workspace.compute_coupling_matrix(
+                field_1,
+                field_2,
+                bins,
+                n_iter=n_iter,
+            )
+            return
+        # NaMaster 2 moved n_iter to NmtField and rejects it on workspaces.
+        workspace.compute_coupling_matrix(field_1, field_2, bins)
+
     def get_bandpowers(self) -> None:
         """
         Set up NaMaster bandpower binning from the configuration.
@@ -212,15 +342,9 @@ class BBPowerSpecter(PipelineStage):
             is_dell = False
             if self.config.get("compute_dell"):
                 is_dell = True
-            self.bins = nmt.NmtBin(
-                self.nside,
-                bpws=bpws,
-                ells=self.larr_all,
-                weights=weights,
-                is_Dell=is_dell,
-            )
+            self.bins = self._make_custom_nmt_bin(bpws, weights, is_dell)
         else:  # otherwise it could be a constant integer interval
-            self.bins = nmt.NmtBin(self.nside, nlb=int(self.config["bpw_edges"]))
+            self.bins = self._make_linear_nmt_bin(int(self.config["bpw_edges"]))
 
     def get_fname_workspace(self, band1: int, band2: int) -> str:
         """
@@ -298,7 +422,7 @@ class BBPowerSpecter(PipelineStage):
             mdum = np.zeros([2, self.npix])
             f1 = self.get_field(b1, mdum)
             f2 = self.get_field(b2, mdum)
-            w.compute_coupling_matrix(f1, f2, self.bins, n_iter=self.config["n_iter"])
+            self._compute_coupling_matrix(w, f1, f2, self.bins, self.config["n_iter"])
             w.write_to(fname)
 
         return w
