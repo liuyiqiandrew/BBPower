@@ -54,15 +54,9 @@ def main() -> None:
     clcee *= dl2cl
     clcbb *= dl2cl
     cl0 = 0 * clsee
-    _, Qs, Us = hp.synfast(
-        [cl0, clsee, clsbb, cl0, cl0, cl0], o.nside, verbose=False, new=True
-    )
-    _, Qd, Ud = hp.synfast(
-        [cl0, cldee, cldbb, cl0, cl0, cl0], o.nside, verbose=False, new=True
-    )
-    _, Qc, Uc = hp.synfast(
-        [cl0, clcee, clcbb, cl0, cl0, cl0], o.nside, verbose=False, new=True
-    )
+    _, Qs, Us = hp.synfast([cl0, clsee, clsbb, cl0, cl0, cl0], o.nside, new=True)
+    _, Qd, Ud = hp.synfast([cl0, cldee, cldbb, cl0, cl0, cl0], o.nside, new=True)
+    _, Qc, Uc = hp.synfast([cl0, clcee, clcbb, cl0, cl0, cl0], o.nside, new=True)
     map_comp = np.array([[Qc, Uc], [Qs, Us], [Qd, Ud]])
     bpss = {n: Bpass(n, f"examples/data/bandpasses/{n}.txt") for n in band_names}
     seds = get_convolved_seds(band_names, bpss)
@@ -85,7 +79,6 @@ def main() -> None:
             _, mpq, mpu = hp.synfast(
                 [cl0, nell[i_f], nell[i_f], cl0, cl0, cl0],
                 o.nside,
-                verbose=False,
                 new=True,
             )
             map_noise[i_s, i_f, 0, :] = mpq * np.sqrt(nsplits)
@@ -96,9 +89,7 @@ def main() -> None:
     for i_f, s in enumerate(s_fwhm):
         fwhm = s * np.pi / 180.0 / 60.0
         for i_p in [0, 1]:
-            map_freq[i_f, i_p, :] = hp.smoothing(
-                map_freq[i_f, i_p, :], fwhm=fwhm, verbose=False
-            )
+            map_freq[i_f, i_p, :] = hp.smoothing(map_freq[i_f, i_p, :], fwhm=fwhm)
 
     # Write output
     for s in range(nsplits):

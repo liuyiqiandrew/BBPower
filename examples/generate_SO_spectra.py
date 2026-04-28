@@ -5,7 +5,9 @@ import sacc
 import sys
 
 
-def main(prefix_out: str) -> None:
+def main(prefix_out: str, so_forecast: bool = False) -> None:
+    print("so_forecast:", so_forecast)
+
     # Bandpasses
     bpss = {n: Bpass(n, f"examples/data/bandpasses/{n}.txt") for n in band_names}
 
@@ -41,7 +43,7 @@ def main(prefix_out: str) -> None:
         dls_comp[2, 1, 2, 1, :],
         dls_comp[0, 0, 0, 0, :],
         dls_comp[0, 1, 0, 1, :],
-    ) = get_component_spectra(lmax)
+    ) = get_component_spectra(lmax, so_forecast=so_forecast)
     dls_comp *= dl2cl[None, None, None, None, :]
 
     # Convolve with windows
@@ -50,7 +52,7 @@ def main(prefix_out: str) -> None:
     )
 
     # Convolve with bandpasses
-    seds = get_convolved_seds(band_names, bpss)
+    seds = get_convolved_seds(band_names, bpss, so_forecast=so_forecast)
     _, nfreqs = seds.shape
 
     # Component -> frequencies
@@ -142,4 +144,4 @@ def main(prefix_out: str) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    main(sys.argv[1], so_forecast="--so_forecast" in sys.argv)

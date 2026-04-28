@@ -6,11 +6,11 @@ BBPower performs a maps-to-parameters analysis: it computes cross-frequency band
 
 ## Installation
 
-Create and activate an environment first (`venv`, `conda`, etc.), then install the extra dependencies that match the stages you want to run.
+Create and activate a conda environment first, then install the extra dependencies that match the stages you want to run.
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
+conda create -n bbpower -c conda-forge python=3.13 pip setuptools wheel
+conda activate bbpower
 python -m pip install --upgrade pip
 ```
 
@@ -28,7 +28,7 @@ Notes:
 - `BBCompSep` always needs `fgbuster`, so `pip install -e .` by itself is **not** enough for component separation.
 - Moment-expanded foreground models need `pyshtools` because `BBCompSep` uses Wigner 3-j symbols for the moment terms.
 - `BBPlotter` can generate spectra plots without MCMC contours, but triangle plots require `getdist`.
-- `BBPowerSpecter` and the full maps-to-parameters workflow need `healpy` and `pymaster`, which are only installed by `.[power-spectra]` / `.[all]`.
+- `BBPowerSpecter` and the full maps-to-parameters workflow need `healpy` and NaMaster (`pymaster`). Prefer conda-forge binaries for these heavy dependencies: `conda install -c conda-forge healpy namaster`.
 - `sampler: polychord` requires a separate PolyChord installation; it is not installed by the package extras.
 
 ```bash
@@ -57,7 +57,7 @@ python -m bbpower BBCompSep \
   --cells_coadded_cov=output/cls_coadd.fits \
   --output_dir=output \
   --config_copy=output/config_copy.yml \
-  --config=test/test_config_sampling.yml
+  --config=test/test_config_sampling_legacy.yml
 
 # 3. Generate diagnostic plots
 python -m bbpower BBPlotter \
@@ -69,7 +69,7 @@ python -m bbpower BBPlotter \
   --param_chains=output/chi2.npz \
   --plots=output/plots.dir \
   --plots_page=output/plots_page.html \
-  --config=test/test_config_sampling.yml
+  --config=test/test_config_sampling_legacy.yml
 ```
 
 ## Pipeline Stages
@@ -100,8 +100,8 @@ For most users, the lowest-friction path is to start at `BBCompSep` with pre-com
 
 BBPower uses two YAML files:
 
-1. **Pipeline file** (e.g., `test/test_sampling.yml`) -- declares stages, input file paths, and output directories for BBPipe orchestration.
-2. **Stage config file** (e.g., `test/test_config_sampling.yml`) -- defines the physical model (CMB templates, foreground components, priors) and sampler settings.
+1. **Pipeline file** (e.g., `test/test_sampling_legacy.yml`) -- declares stages, input file paths, and output directories for BBPipe orchestration.
+2. **Stage config file** (e.g., `test/test_config_sampling_legacy.yml`) -- defines the physical model (CMB templates, foreground components, priors) and sampler settings.
 
 The stage config has a `global` section (shared by all stages) and per-stage sections:
 
@@ -192,10 +192,11 @@ param_name: ['internal_name', 'prior_type', [prior_args]]
 
 ## Tests
 
-Tests are shell scripts in `test/`. The fastest is:
+Tests are shell scripts in `test/`. The fastest current smoke tests are:
 
 ```bash
-bash test/run_sampling_test.sh
+bash test/run_compsep_test.sh
+bash test/run_predicted_spectra_test.sh
 ```
 
 See [docs/examples.md](docs/examples.md) for descriptions of all test scripts and example workflows.
@@ -206,7 +207,7 @@ For setup validation, the most useful smoke tests are:
 # BBCompSep only
 bash test/run_compsep_test.sh
 
-# BBCompSep + BBPlotter
+# Legacy direct spectra -> BBCompSep + BBPlotter workflow
 bash test/run_sampling_test.sh
 
 # Predicted spectra output

@@ -20,6 +20,12 @@ This creates three SACC files in `output/`:
 
 The script uses Simons Observatory V3 sensitivity curves (`examples/noise_calc.py`) and a dust+synchrotron+CMB model (`examples/utils.py`) to produce realistic multi-frequency polarization bandpowers across 6 frequency channels (27, 39, 93, 145, 225, 280 GHz).
 
+To use the alternate SO 2023 forecast foreground parameters from Wolz et al. 2302.04276, add `--so_forecast`:
+
+```bash
+python examples/generate_SO_spectra.py output --so_forecast
+```
+
 ### Step 2: Run the maximum-likelihood fit
 
 ```bash
@@ -30,10 +36,10 @@ python -m bbpower BBCompSep \
   --cells_coadded_cov=output/cls_coadd.fits \
   --output_dir=output \
   --config_copy=output/config_copy.yml \
-  --config=test/test_config_sampling.yml
+  --config=test/test_config_sampling_legacy.yml
 ```
 
-This reads the config in `test/test_config_sampling.yml`, which sets `sampler: 'maximum_likelihood'`. The fit finds the best-fit values for all free parameters (r, A_lens, foreground amplitudes and tilts, spectral indices, dust-synchrotron correlation).
+This reads the legacy direct-spectra config in `test/test_config_sampling_legacy.yml`, which sets `sampler: 'maximum_likelihood'`. The fit finds the best-fit values for all free parameters (r, A_lens, foreground amplitudes and tilts, spectral indices, dust-synchrotron correlation).
 
 Output: `output/chi2.npz` containing `params` (best-fit vector), `names` (parameter names), `chi2`, and `ndof`.
 
@@ -49,7 +55,7 @@ python -m bbpower BBPlotter \
   --param_chains=output/chi2.npz \
   --plots=output/plots.dir \
   --plots_page=output/plots_page.html \
-  --config=test/test_config_sampling.yml
+  --config=test/test_config_sampling_legacy.yml
 ```
 
 Output: `output/plots.dir/` with PNG files and `output/plots_page.html`.
@@ -321,13 +327,21 @@ The `test/` directory contains integration tests:
 
 | Script | What it tests | Runtime |
 |---|---|---|
-| `run_sampling_test.sh` | Synthetic spectra -> BBCompSep (MAP) -> BBPlotter | ~1 min |
+| `run_sampling_test.sh` | Legacy synthetic spectra -> BBCompSep (MAP) -> BBPlotter wrapper | ~1 min |
+| `run_sampling_legacy_test.sh` | Legacy direct spectra workflow implementation | ~1 min |
 | `run_compsep_test.sh` | BBCompSep single_point chi2 validation | ~30 sec |
 | `run_predicted_spectra_test.sh` | BBCompSep predicted spectra output | ~30 sec |
 | `run_power_specter_test.sh` | Full pipeline: maps -> spectra -> coadd -> MCMC -> plots | ~30 min |
 | `run_polychord_test.sh` | Full pipeline with PolyChord sampler | ~1 hr |
 
-Run the sampling test to verify your installation:
+Run the current lightweight tests to verify your installation:
+
+```bash
+bash test/run_compsep_test.sh
+bash test/run_predicted_spectra_test.sh
+```
+
+The old direct sampling workflow is still available as a legacy smoke test:
 
 ```bash
 bash test/run_sampling_test.sh

@@ -1,19 +1,10 @@
 import numpy as np
 
-# Foreground model
-A_sync_BB = 2.0
 EB_sync = 2.0
-alpha_sync_EE = -0.6
-alpha_sync_BB = -0.4
 beta_sync = -3.0
 nu0_sync = 23.0
 
-A_dust_BB = 5.0
 EB_dust = 2.0
-alpha_dust_EE = -0.42
-alpha_dust_BB = -0.2
-beta_dust = 1.59
-temp_dust = 19.6
 nu0_dust = 353.0
 
 Alens = 1.0
@@ -85,7 +76,22 @@ class Bpass(object):
         return sed
 
 
-def get_component_spectra(lmax):
+def get_component_spectra(lmax, so_forecast=False):
+    if so_forecast:  # Foreground parameters from Wolz et al. 2302.04276.
+        A_sync_BB = 1.6
+        alpha_sync_EE = -0.7
+        alpha_sync_BB = -0.93
+        A_dust_BB = 28.0
+        alpha_dust_EE = -0.32
+        alpha_dust_BB = -0.16
+    else:  # Foreground parameters from SO forecast paper 2011.02449.
+        A_sync_BB = 2.0
+        alpha_sync_EE = -0.6
+        alpha_sync_BB = -0.4
+        A_dust_BB = 5.0
+        alpha_dust_EE = -0.42
+        alpha_dust_BB = -0.2
+
     larr_all = np.arange(lmax + 1)
     dls_sync_ee = dl_plaw(A_sync_BB * EB_sync, alpha_sync_EE, larr_all)
     dls_sync_bb = dl_plaw(A_sync_BB, alpha_sync_BB, larr_all)
@@ -102,7 +108,14 @@ def get_component_spectra(lmax):
     )
 
 
-def get_convolved_seds(names, bpss):
+def get_convolved_seds(names, bpss, so_forecast=False):
+    if so_forecast:  # Foreground parameters from Wolz et al. 2302.04276.
+        beta_dust = 1.54
+        temp_dust = 20.0
+    else:  # Foreground parameters from SO forecast paper 2011.02449.
+        beta_dust = 1.59
+        temp_dust = 19.6
+
     nfreqs = len(names)
     seds = np.zeros([3, nfreqs])
     for ib, n in enumerate(names):

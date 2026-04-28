@@ -122,6 +122,28 @@ def _emcee_backend_lock(filename: str) -> Generator[None, None, None]:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
+def _reference_chi2(likelihood: Likelihood) -> tuple[float, int]:
+    """Return a best-effort reference chi2 and number of data degrees.
+
+    Older BBPower scripts expect ``emcee.npz`` to include ``chi2`` and
+    ``ndof``.  Keep those compatibility fields outside ``BBCompSep`` so the
+    stage can continue delegating sampler behavior to this module.
+    """
+    from scipy.optimize import minimize
+
+    def chi2(par: np.ndarray) -> float:
+        return -2 * likelihood.lnprob(par)
+
+    try:
+        result = minimize(chi2, likelihood.params.p0, method="Powell")
+        par = result.x
+    except Exception:
+        par = likelihood.params.p0
+
+    ndof = len(getattr(likelihood, "invcov", []))
+    return chi2(par), ndof
+
+
 def run_emcee(likelihood: Likelihood, config: dict, output_dir: str) -> dict:
     """Run an MCMC using emcee.
 
@@ -209,18 +231,23 @@ def run_emcee(likelihood: Likelihood, config: dict, output_dir: str) -> dict:
             ) from exc
         elapsed = time.time() - start
 
+    chi2, ndof = _reference_chi2(likelihood)
     out_path = os.path.join(output_dir, "emcee.npz")
     np.savez(
         out_path,
         chain=sampler.chain,
         names=likelihood.params.p_free_names,
         time=elapsed,
+        chi2=chi2,
+        ndof=ndof,
     )
     print(f"Finished sampling {elapsed}")
     return {
         "chain": sampler.chain,
         "names": likelihood.params.p_free_names,
         "time": elapsed,
+        "chi2": chi2,
+        "ndof": ndof,
     }
 
 

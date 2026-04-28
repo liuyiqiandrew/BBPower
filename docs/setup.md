@@ -8,15 +8,15 @@ This page is the quickest way to get BBPower running with the fewest moving part
 
 ## 1. Create an environment
 
-Use any Python environment manager you prefer. A plain virtualenv works:
+Use conda with Python 3.13 for new installs:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
+conda create -n bbpower -c conda-forge python=3.13 pip setuptools wheel
+conda activate bbpower
 python -m pip install --upgrade pip
 ```
 
-BBPower requires Python >= 3.10.
+BBPower requires Python >= 3.10, but Python 3.13 is the recommended default for new conda environments. A plain virtualenv still works if you already manage dependencies another way.
 
 ## 2. Install only what you need
 
@@ -28,7 +28,7 @@ The package is deliberately split into extras so you do not need heavy map-level
 | Run component separation on pre-computed spectra | `BBCompSep` | `pip install -e ".[compsep]"` | This is the most common setup |
 | Run component separation and make plots | `BBCompSep`, `BBPlotter` | `pip install -e ".[compsep,plotting]"` | Needed for triangle plots via `getdist` |
 | Use moment-expanded foreground models or Fisher runs | `BBCompSep` | `pip install -e ".[compsep,plotting,sampling]"` | Adds `pyshtools` and `numdifftools` |
-| Run the full maps-to-parameters pipeline | All four stages | `pip install -e ".[all]"` | Includes `healpy` and `pymaster` |
+| Run the full maps-to-parameters pipeline | All four stages | `conda install -c conda-forge healpy namaster && pip install -e ".[all]"` | Prefer conda binaries for heavy compiled dependencies |
 
 Practical notes:
 
@@ -36,6 +36,7 @@ Practical notes:
 - `BBPlotter` only needs `getdist` if you want likelihood contours from `emcee` chains.
 - `BBCompSep` with `fg_model.use_moments: true` needs `pyshtools` for Wigner 3-j calculations.
 - `sampler: polychord` requires a separate PolyChord installation that is not provided by `pyproject.toml`.
+- If `pip install -e ".[all]"` tries to compile NaMaster locally, install `namaster` from conda-forge first and use narrower BBPower extras for the remaining workflow.
 
 ## 3. Verify the install
 
@@ -140,11 +141,11 @@ These are the fastest ways to confirm a given install actually runs the stages y
 # Component separation only
 bash test/run_compsep_test.sh
 
-# Component separation + plot generation
-bash test/run_sampling_test.sh
-
 # Predicted spectra mode
 bash test/run_predicted_spectra_test.sh
+
+# Legacy direct spectra -> component separation + plot generation
+bash test/run_sampling_test.sh
 ```
 
 If you installed the full map-level stack:
@@ -184,6 +185,7 @@ pip install -e ".[sampling]"
 You are trying to run `BBPowerSpecter` without the map-level dependencies:
 
 ```bash
+conda install -c conda-forge healpy namaster
 pip install -e ".[power-spectra]"
 ```
 
