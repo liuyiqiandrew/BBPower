@@ -221,6 +221,7 @@ bash test/run_predicted_spectra_test.sh
 - [docs/architecture.md](docs/architecture.md) -- Module interactions, data flow, and class relationships
 - [docs/configuration.md](docs/configuration.md) -- Complete configuration reference
 - [docs/examples.md](docs/examples.md) -- Step-by-step usage examples and test descriptions
+- [docs/refactor_stack.md](docs/refactor_stack.md) -- Detailed branch-by-branch refactor integration notes
 
 ## Credits
 
